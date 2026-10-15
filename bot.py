@@ -446,7 +446,7 @@ async def cmd_collections(event: types.Message | types.CallbackQuery):
     if isinstance(event, types.CallbackQuery):
         await event.message.edit_text(text, parse_html="HTML", reply_markup=kb)
     else:
-        await event.answer(text, parse_html="HTML", reply_markup=kb)
+        await message.answer(text, parse_html="HTML", reply_markup=kb)
 
 @dp.callback_query(F.data.startswith("coll_"))
 async def show_collection_items(callback: types.CallbackQuery):
@@ -491,7 +491,7 @@ async def cmd_filter(event: types.Message | types.CallbackQuery):
     if isinstance(event, types.CallbackQuery):
         await event.message.edit_text(text, parse_html="HTML", reply_markup=kb)
     else:
-        await event.answer(text, parse_html="HTML", reply_markup=kb)
+        await message.answer(text, parse_html="HTML", reply_markup=kb)
 
 @dp.callback_query(F.data == "f_search")
 async def filter_search_action(callback: types.CallbackQuery):
@@ -520,7 +520,7 @@ async def cmd_settings(event: types.Message | types.CallbackQuery):
     if isinstance(event, types.CallbackQuery):
         await event.message.edit_text(text, parse_html="HTML", reply_markup=kb)
     else:
-        await event.answer(text, parse_html="HTML", reply_markup=kb)
+        await message.answer(text, parse_html="HTML", reply_markup=kb)
 
 @dp.callback_query(F.data == "help")
 async def cb_help(callback: types.CallbackQuery):
@@ -568,6 +568,8 @@ async def set_commands(bot: Bot):
     await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
 
 async def main():
+    # Удаляем вебхук перед запуском поллинга, чтобы избежать конфликтов на Render
+    await bot.delete_webhook(drop_pending_updates=True)
     await set_commands(bot)
     logging.info("Bot KINOrave successfully started!")
     await dp.start_polling(bot)
