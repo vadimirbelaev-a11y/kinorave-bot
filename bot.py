@@ -2,6 +2,7 @@ import os
 import random
 import logging
 import re
+import time
 import aiohttp
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types
@@ -39,6 +40,9 @@ REFS_FILE = "referrals.txt"
 CONFIG_FILE = "bot_mode.txt"
 MAINTENANCE_FILE = "maintenance.txt"
 
+FLOOD_CONTROL = {}
+FLOOD_LIMIT_SECONDS = 1.0
+
 HEADERS = {
     "X-API-KEY": KP_API_KEY,
     "Content-Type": "application/json",
@@ -60,20 +64,39 @@ LOCAL_MOVIES_DB = [
     {"title": "Терминатор 2: Судный день", "year": "1991", "rating": "8.3", "imdb": "8.6", "tmdb": "81%", "duration": "137 мин.", "desc": "фильм | кр:8.3 | imdb:8.6 | 1991 | США | фантастика, боевик", "id": 280},
     {"title": "Матрица", "year": "1999", "rating": "8.5", "imdb": "8.7", "tmdb": "82%", "duration": "136 мин.", "desc": "фильм | кр:8.5 | imdb:8.7 | 1999 | США | фантастика, боевик", "id": 603},
     {"title": "Властелин колец: Братство Кольца", "year": "2001", "rating": "8.6", "imdb": "8.8", "tmdb": "84%", "duration": "178 мин.", "desc": "фильм | кр:8.6 | imdb:8.8 | 2001 | Новая Зеландия | фэнтези, приключения", "id": 120},
+    {"title": "Властелин колец: Две крепости", "year": "2002", "rating": "8.6", "imdb": "8.8", "tmdb": "84%", "duration": "179 мин.", "desc": "фильм | кр:8.6 | imdb:8.8 | 2002 | Новая Зеландия | фэнтези, приключения", "id": 121},
+    {"title": "Властелин колец: Возвращение короля", "year": "2003", "rating": "8.7", "imdb": "9.0", "tmdb": "85%", "duration": "201 мин.", "desc": "фильм | кр:8.7 | imdb:9.0 | 2003 | Новая Зеландия | фэнтези, приключения", "id": 122},
     {"title": "Темный рыцарь", "year": "2008", "rating": "8.5", "imdb": "9.0", "tmdb": "85%", "duration": "152 мин.", "desc": "фильм | кр:8.5 | imdb:9.0 | 2008 | США | боевик, триллер, драма", "id": 155},
     {"title": "Бойцовский клуб", "year": "1999", "rating": "8.7", "imdb": "8.8", "tmdb": "84%", "duration": "139 мин.", "desc": "фильм | кр:8.7 | imdb:8.8 | 1999 | США | триллер, драма, криминал", "id": 550},
     {"title": "Криминальное чтиво", "year": "1994", "rating": "8.6", "imdb": "8.9", "tmdb": "85%", "duration": "154 мин.", "desc": "фильм | кр:8.6 | imdb:8.9 | 1994 | США | криминал, драма", "id": 680},
+    {"title": "Шестое чувство", "year": "1999", "rating": "8.2", "imdb": "8.2", "tmdb": "79%", "duration": "107 мин.", "desc": "фильм | кр:8.2 | imdb:8.2 | 1999 | США | триллер, драма, детектив", "id": 745},
+    {"title": "Собачье сердце", "year": "1988", "rating": "8.8", "imdb": "8.5", "tmdb": "81%", "duration": "130 мин.", "desc": "фильм | кр:8.8 | imdb:8.5 | 1988 | СССР | фантастика, драма, комедия", "id": 4321},
     {"title": "Брат", "year": "1997", "rating": "8.3", "imdb": "8.0", "tmdb": "76%", "duration": "100 мин.", "desc": "фильм | кр:8.3 | imdb:8.0 | 1997 | Россия | драма, криминал, боевик", "id": 4212},
     {"title": "Брат 2", "year": "2000", "rating": "8.1", "imdb": "8.0", "tmdb": "75%", "duration": "127 мин.", "desc": "фильм | кр:8.1 | imdb:8.0 | 2000 | Россия | боевик, криминал, драма", "id": 4213},
+    {"title": "Операция «Ы» и другие приключения Шурика", "year": "1965", "rating": "8.7", "imdb": "8.4", "tmdb": "82%", "duration": "95 мин.", "desc": "фильм | кр:8.7 | imdb:8.4 | 1965 | СССР | комедия, мелодрама", "id": 4322},
+    {"title": "Джентльмены удачи", "year": "1971", "rating": "8.5", "imdb": "8.2", "tmdb": "79%", "duration": "88 мин.", "desc": "фильм | кр:8.5 | imdb:8.2 | 1971 | СССР | комедия, криминал", "id": 4323},
+    {"title": "Иван Васильевич меняет профессию", "year": "1973", "rating": "8.8", "imdb": "8.3", "tmdb": "82%", "duration": "88 мин.", "desc": "фильм | кр:8.8 | imdb:8.3 | 1973 | СССР | комедия, фантастика", "id": 4324},
+    {"title": "Бриллиантовая рука", "year": "1968", "rating": "8.5", "imdb": "8.3", "tmdb": "80%", "duration": "94 мин.", "desc": "фильм | кр:8.5 | imdb:8.3 | 1968 | СССР | комедия, криминал", "id": 4325},
     {"title": "Во все тяжкие", "year": "2008", "rating": "8.9", "imdb": "9.5", "tmdb": "89%", "duration": "49 мин.", "desc": "сериал | кр:8.9 | imdb:9.5 | 2008 | США | драма, криминал, триллер", "id": 5002},
     {"title": "Игра престолов", "year": "2011", "rating": "9.0", "imdb": "9.2", "tmdb": "84%", "duration": "57 мин.", "desc": "сериал | кр:9.0 | imdb:9.2 | 2011 | США | фэнтези, драма, приключения", "id": 5003},
     {"title": "Сверхъестественное", "year": "2005", "rating": "8.2", "imdb": "8.4", "tmdb": "82%", "duration": "43 мин.", "desc": "сериал | кр:8.2 | imdb:8.4 | 2005 | США | фэнтези, ужасы, детектив", "id": 5004},
     {"title": "Рик и Морти", "year": "2013", "rating": "8.8", "imdb": "9.1", "tmdb": "85%", "duration": "23 мин.", "desc": "сериал | кр:8.8 | imdb:9.1 | 2013 | США | мультфильм, фантастика, комедия", "id": 5005},
-    {"title": "Шерлок", "year": "2010", "rating": "8.9", "imdb": "9.1", "tmdb": "85%", "duration": "90 мин.", "desc": "сериал | кр:8.9 | imdb:9.1 | 2010 | Великобритания | детектив, драма, криминал", "id": 5007}
+    {"title": "Острые козырьки", "year": "2013", "rating": "8.3", "imdb": "8.8", "tmdb": "85%", "duration": "60 мин.", "desc": "сериал | кр:8.3 | imdb:8.8 | 2013 | Великобритания | драма, криминал", "id": 5006},
+    {"title": "Шерлок", "year": "2010", "rating": "8.9", "imdb": "9.1", "tmdb": "85%", "duration": "90 мин.", "desc": "сериал | кр:8.9 | imdb:9.1 | 2010 | Великобритания | детектив, драма, криминал", "id": 5007},
+    {"title": "Ведьмак", "year": "2019", "rating": "7.3", "imdb": "8.0", "tmdb": "78%", "duration": "60 мин.", "desc": "сериал | кр:7.3 | imdb:8.0 | 2019 | США | фэнтези, приключения, экшен", "id": 5008},
+    {"title": "Пацаны", "year": "2019", "rating": "8.3", "imdb": "8.7", "tmdb": "85%", "duration": "60 мин.", "desc": "сериал | кр:8.3 | imdb:8.7 | 2019 | США | фантастика, боевик, комедия", "id": 5009}
 ]
 
 def clean_title(text: str) -> str:
     return re.sub(r'[^а-яa-z0-9]', '', text.lower())
+
+def is_flood(user_id: int) -> bool:
+    now = time.time()
+    if user_id in FLOOD_CONTROL:
+        if now - FLOOD_CONTROL[user_id] < FLOOD_LIMIT_SECONDS:
+            return True
+    FLOOD_CONTROL[user_id] = now
+    return False
 
 def get_current_mode() -> str:
     if os.path.exists(CONFIG_FILE):
@@ -207,7 +230,7 @@ async def start_cmd(message: types.Message):
         await message.answer("👋 Привет, " + str(message.from_user.first_name) + "!\n\n🔒 Для доступа к каталогу подпишись на канал KINOrave:", reply_markup=get_sub_kb())
         return
         
-    txt = "🎬 **Добро пожаловать в KINOrave!**\n\n🍿 Напиши название фильма прямо в чат для мгновенного поиска.\n\n💬 [Наш канал](" + CHANNEL_LINK + ")"
+    txt = "🎬 **Добро пожаловать в KINOrave!**\n\n🍿 Напиши название фильма прямо в чат для поиска.\n\n💬 [Наш канал](" + CHANNEL_LINK + ")"
     await message.answer(txt, reply_markup=get_start_kb(), parse_mode="Markdown", disable_web_page_preview=True)
     await message.answer("Главное меню управления:", reply_markup=get_main_kb())
 
@@ -222,11 +245,11 @@ async def admin_panel(message: types.Message):
         return
 
     mode = get_current_mode()
-    maint_status = "ВКЛЮЧЕНО 🔴 (Заглушка активна)" else "ВЫКЛЮЧЕНО 🟢" if not is_maintenance() else "ВКЛЮЧЕНО 🔴"
+    maint_text = "ВКЛЮЧЕНО 🔴" if is_maintenance() else "ВЫКЛЮЧЕНО 🟢"
     txt = (
-        f"🛠 **Админ-панель KINOrave**\n\n"
+        f"🛠 **Защищенная админ-панель KINOrave**\n\n"
         f"⚙️ Режим поиска: **{mode.upper()}**\n"
-        f"🛠 Тех. обслуживание: **{'ВКЛЮЧЕНО 🔴' if is_maintenance() else 'ВЫКЛЮЧЕНО 🟢'}**\n"
+        f"🛠 Тех. обслуживание: **{maint_text}**\n"
         f"👥 Всего пользователей: **{get_users_count()}**\n\n"
         f"📢 **Рассылка:** напишите `/broadcast [ваш текст]`"
     )
@@ -287,10 +310,11 @@ async def admin_switcher(callback: types.CallbackQuery):
         return
 
     mode = get_current_mode()
+    maint_text = "ВКЛЮЧЕНО 🔴" if is_maintenance() else "ВЫКЛЮЧЕНО 🟢"
     txt = (
-        f"🛠 **Админ-панель KINOrave**\n\n"
+        f"🛠 **Защищенная админ-панель KINOrave**\n\n"
         f"⚙️ Режим поиска: **{mode.upper()}**\n"
-        f"🛠 Тех. обслуживание: **{'ВКЛЮЧЕНО 🔴' if is_maintenance() else 'ВЫКЛЮЧЕНО 🟢'}**\n"
+        f"🛠 Тех. обслуживание: **{maint_text}**\n"
         f"👥 Всего пользователей: **{get_users_count()}**"
     )
     await callback.message.edit_text(txt, parse_mode="Markdown", reply_markup=get_admin_kb())
@@ -403,6 +427,10 @@ async def sub_callback(callback: types.CallbackQuery):
 @dp.message()
 async def text_search(message: types.Message):
     uid = message.from_user.id
+    
+    if is_flood(uid) and uid != ADMIN_ID:
+        return  
+
     if is_maintenance() and uid != ADMIN_ID:
         await message.answer("🛠 В боте проводятся плановые технические работы. Скоро вернемся!")
         return
