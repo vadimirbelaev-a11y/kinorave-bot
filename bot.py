@@ -18,11 +18,9 @@ from aiogram.types import (
 
 logging.basicConfig(level=logging.INFO)
 
-# --- ОСНОВНЫЕ НАСТРОЙКИ ---
 BOT_TOKEN = "8410105070:AAHUuktDtUm_ICmRiRx0HghwsNkfYcNYD0Y"
 TMDB_API_KEY = "e2d7e4ba3b610d32bb5826f04d026bd6"
 
-# Твой канал KINOrave
 CHANNEL_LINK = "https://t.me/kinorave_tg"
 CHANNEL_USERNAME = "@kinorave_tg"
 
@@ -34,7 +32,6 @@ PORT = int(os.environ.get("PORT", 10000))
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- БАЗА ПОЛЬЗОВАТЕЛЕЙ И СТАТИСТИКА ---
 USERS_FILE = "users.txt"
 
 def save_user(user_id: int):
@@ -52,14 +49,12 @@ def get_users_count() -> int:
     with open(USERS_FILE, "r") as f:
         return len(set(line.strip() for line in f if line.strip()))
 
-# --- ПРОВЕРКА ПОДПИСКИ ---
 async def check_subscription(user_id: int) -> bool:
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
         return member.status in ["creator", "administrator", "member"]
     except Exception as e:
         logging.error(f"Ошибка проверки подписки: {e}")
-        # Если бот еще не админ в канале, не блокируем поиск жестко
         return True
 
 def get_sub_keyboard():
@@ -68,7 +63,6 @@ def get_sub_keyboard():
         [InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sub")]
     ])
 
-# Нижняя панель (Reply Keyboard)
 def get_main_reply_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -84,8 +78,6 @@ def get_main_reply_keyboard():
         ],
         resize_keyboard=True
     )
-
-# --- ИНЛАЙН-КЛАВИАТУРЫ (ПЕРЕРАБОТАННЫЙ ДИЗАЙН) ---
 
 def get_start_inline_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -204,13 +196,10 @@ def get_movie_keyboard(title: str):
         [InlineKeyboardButton(text="🔍 Искать дальше", switch_inline_query_current_chat="")]
     ])
 
-# --- ОБРАБОТЧИКИ КОМАНД С АВТОУДАЛЕНИЕМ ---
-
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
     save_user(user_id)
-    
     try:
         await message.delete()
     except Exception:
@@ -229,12 +218,7 @@ async def cmd_start(message: types.Message):
         "🍿 Жми кнопки меню ниже или отправь название нужного фильма прямым сообщением в чат.\n\n"
         f"💬 Нужна помощь? [Переходи в наше сообщество]({CHANNEL_LINK})"
     )
-    await message.answer(
-        text, 
-        reply_markup=get_start_inline_keyboard(), 
-        parse_mode="Markdown", 
-        disable_web_page_preview=True
-    )
+    await message.answer(text, reply_markup=get_start_inline_keyboard(), parse_mode="Markdown", disable_web_page_preview=True)
     await message.answer("Главное меню:", reply_markup=get_main_reply_keyboard())
 
 @dp.message(Command("search"))
@@ -278,204 +262,4 @@ async def cmd_filter(message: types.Message):
         pass
 
     if not await check_subscription(user_id):
-        await message.answer("Для использования бота подпишитесь на канал!", reply_markup=get_sub_keyboard())
-        return
-
-    text = (
-        "⚙️ **Текущие параметры фильтрации:**\n\n"
-        "🔹 **Оценка:** от 5.0 до 10.0\n"
-        "🔹 **Период:** Все года\n"
-        "🔹 **Формат:** Фильмы и Сериалы\n"
-        "🔹 **Жанры:** Любые\n"
-        "🔹 **Страна:** Все страны"
-    )
-    await message.answer(text, reply_markup=get_filter_inline_keyboard(), parse_mode="Markdown")
-
-@dp.message(Command("settings"))
-async def cmd_settings(message: types.Message):
-    user_id = message.from_user.id
-    save_user(user_id)
-    try:
-        await message.delete()
-    except Exception:
-        pass
-
-    if not await check_subscription(user_id):
-        await message.answer("Для использования бота подпишитесь на канал!", reply_markup=get_sub_keyboard())
-        return
-
-    text = (
-        "⚙️ **Персональные настройки**\n\n"
-        f"🆔 Твой ID: `{user_id}`\n"
-        "📅 Статус профиля: Активен"
-    )
-    await message.answer(text, reply_markup=get_settings_inline_keyboard(), parse_mode="Markdown")
-
-@dp.message(Command("share"))
-async def cmd_share(message: types.Message):
-    user_id = message.from_user.id
-    save_user(user_id)
-    try:
-        await message.delete()
-    except Exception:
-        pass
-
-    if not await check_subscription(user_id):
-        await message.answer("Для использования бота подпишитесь на канал!", reply_markup=get_sub_keyboard())
-        return
-
-    bot_info = await bot.get_me()
-    ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
-
-    text = (
-        "🎁 **Приглашай друзей в KINOrave!**\n\n"
-        "Делись индивидуальной ссылкой с друзьями и знакомыми:\n\n"
-        f"🔗 `{ref_link}`\n\n"
-        "📌 *Примечание: засчитываются только новые пользователи, ранее не запускавшие бота.*"
-    )
-    await message.answer(text, reply_markup=get_share_inline_keyboard(bot_info.username, user_id), parse_mode="Markdown")
-
-@dp.message(Command("stats"))
-async def cmd_stats(message: types.Message):
-    user_id = message.from_user.id
-    try:
-        await message.delete()
-    except Exception:
-        pass
-    count = get_users_count()
-    await message.answer(f"📊 **Статистика KINOrave:**\n\n👥 Всего уникальных зрителей: **{count}**\n🆔 Ваш ID: `{user_id}`", parse_mode="Markdown")
-
-# ОБРАБОТКА НИЖНЕЙ ПАНЕЛИ
-@dp.message(lambda m: m.text in ["🔍 Поиск", "📁 Подборки", "🌪 Фильтр", "⚙️ Настройки", "🎁 Поделиться"])
-async def reply_buttons_handler(message: types.Message):
-    user_id = message.from_user.id
-    save_user(user_id)
-    
-    if not await check_subscription(user_id):
-        await message.answer("Для использования бота подпишитесь на канал!", reply_markup=get_sub_keyboard())
-        return
-
-    text = message.text
-    if text == "🔍 Поиск":
-        await message.answer("🔍 **Поиск фильмов и сериалов**\n\nНажми «Начать поиск» для инлайн-режима или просто напиши название фильма прямо в этот чат!", reply_markup=get_search_inline_keyboard(), parse_mode="Markdown")
-    elif text == "📁 Подборки":
-        await message.answer("📁 **Тематические коллекции и киноподборки**\n\n✨ *Выбирай лучшее для вечернего просмотра!*", reply_markup=get_collections_inline_keyboard(), parse_mode="Markdown")
-    elif text == "🌪 Фильтр":
-        await message.answer("⚙️ **Текущие параметры фильтрации:**\n\n🔹 **Оценка:** от 5.0 до 10.0\n🔹 **Период:** Все года\n🔹 **Формат:** Фильмы и Сериалы", reply_markup=get_filter_inline_keyboard(), parse_mode="Markdown")
-    elif text == "⚙️ Настройки":
-        await message.answer(f"⚙️ **Персональные настройки**\n\n🆔 Твой ID: `{user_id}`", reply_markup=get_settings_inline_keyboard(), parse_mode="Markdown")
-    elif text == "🎁 Поделиться":
-        bot_info = await bot.get_me()
-        ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
-        await message.answer(f"🎁 **Приглашай друзей в KINOrave!**\n\n🔗 Твоя ссылка:\n`{ref_link}`", reply_markup=get_share_inline_keyboard(bot_info.username, user_id), parse_mode="Markdown")
-
-@dp.callback_query(lambda c: c.data == "check_sub")
-async def process_check_sub(callback: types.CallbackQuery):
-    if await check_subscription(callback.from_user.id):
-        await callback.message.delete()
-        await callback.message.answer("🎉 Подписка подтверждена! Приятного пользования.", reply_markup=get_main_reply_keyboard())
-        
-        text = "🎬 **Добро пожаловать в KINOrave!**\n\n🍿 Выбирай разделы в меню или пиши название фильма."
-        await callback.message.answer(text, reply_markup=get_start_inline_keyboard(), parse_mode="Markdown")
-    else:
-        await callback.answer("❌ Вы всё ещё не подписались на канал KINOrave!", show_alert=True)
-
-# ИНЛАЙН-ПОИСК
-@dp.inline_query()
-async def inline_search(inline_query: InlineQuery):
-    user_id = inline_query.from_user.id
-    save_user(user_id)
-    
-    if not await check_subscription(user_id):
-        return
-
-    query = inline_query.query.strip()
-    if not query:
-        return
-
-    headers = {"User-Agent": "Mozilla/5.0"}
-    url = "https://api.themoviedb.org/3/search/multi"
-    params = {"api_key": TMDB_API_KEY, "language": "ru-RU", "query": query}
-
-    results = []
-    try:
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(url, params=params, timeout=5) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    items = data.get('results', [])[:10]
-
-                    for idx, item in enumerate(items):
-                        media_type = "сериал" if item.get('media_type') == 'tv' else "фильм"
-                        title = item.get('title') or item.get('name') or "Без названия"
-                        orig_title = item.get('original_title') or item.get('original_name') or ""
-                        rating = item.get('vote_average', 0)
-                        release_date = item.get('release_date') or item.get('first_air_date') or ""
-                        year = release_date.split('-')[0] if release_date else "Н/Д"
-                        poster_path = item.get('poster_path')
-                        overview = item.get('overview') or "Описание отсутствует."
-
-                        description = f"{media_type} | tmdb:{rating:.1f} | {year}"
-                        if orig_title:
-                            description = f"{orig_title}\n{description}"
-
-                        thumb_url = f"https://image.tmdb.org/t/p/w185{poster_path}" if poster_path else "https://via.placeholder.com/150"
-
-                        caption = (
-                            f"🎬 **{title}** ({year})\n"
-                            f"📝 *{orig_title}*\n\n"
-                            f"⭐ **Рейтинг:** {rating:.1f} / 10\n\n"
-                            f"📖 **Описание:**\n{overview[:350]}..."
-                        )
-
-                        results.append(
-                            InlineQueryResultArticle(
-                                id=str(idx),
-                                title=title,
-                                description=description,
-                                thumbnail_url=thumb_url,
-                                input_message_content=InputTextMessageContent(
-                                    message_text=caption,
-                                    parse_mode="Markdown"
-                                ),
-                                reply_markup=get_movie_keyboard(title)
-                            )
-                        )
-        await inline_query.answer(results, cache_time=1)
-    except Exception as e:
-        logging.error(f"Ошибка в inline_search: {e}")
-
-# ПОИСК ИЗ ЧАТА
-@dp.message()
-async def search_movie(message: types.Message):
-    user_id = message.from_user.id
-    save_user(user_id)
-    
-    if not await check_subscription(user_id):
-        await message.answer("Для поиска необходимо быть подписанным на канал KINOrave!", reply_markup=get_sub_keyboard())
-        return
-
-    query = message.text
-    if not query or query.startswith("/"):
-        return
-
-    headers = {"User-Agent": "Mozilla/5.0"}
-    url = "https://api.themoviedb.org/3/search/multi"
-    params = {"api_key": TMDB_API_KEY, "language": "ru-RU", "query": query}
-
-    try:
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(url, params=params, timeout=10) as response:
-                if response.status != 200:
-                    await message.answer("⚠️ Ошибка базы данных TMDB. Повторите попытку позже!")
-                    return
-
-                data = await response.json()
-                results = data.get('results', [])
-
-                if not results:
-                    await message.answer("😔 По вашему запросу ничего не найдено. Проверьте правильность названия.")
-                    return
-
-                item = results[0]
-                title = item.get('title') or item.get('na
+        await message.answer("
