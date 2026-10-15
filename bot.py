@@ -175,4 +175,206 @@ async def settings_cmd(message: types.Message):
 
 @dp.message(Command("share"))
 async def share_cmd(message: types.Message):
-    uid
+    uid = message.from_user.id
+    save_user(uid)
+    try: await message.delete()
+    except Exception: pass
+    if not await check_subscription(uid):
+        await message.answer("Подпишись на канал!", reply_markup=get_sub_kb())
+        return
+        
+    me = await bot.get_me()
+    ref = "https://t.me/" + str(me.username) + "?start=ref_" + str(uid)
+    refs_count = get_referral_count(uid)
+    
+    txt = (
+        "🎁 **Приглашай друзей в KINOrave!**\n\n"
+        "👥 Приглашено друзей: **" + str(refs_count) + "**\n\n"
+        "🔗 Твоя персональная ссылка:\n`" + ref + "`\n\n"
+        "📌 *Делись ссылкой с друзьями и следи за своими бонусами!*"
+    )
+    await message.answer(txt, reply_markup=get_share_kb(me.username, uid), parse_mode="Markdown")
+
+@dp.message(Command("stats"))
+async def stats_cmd(message: types.Message):
+    try: await message.delete()
+    except Exception: pass
+    await message.answer("📊 **Статистика KINOrave:**\n\n👥 Всего зрителей в боте: **" + str(get_users_count()) + "**\n🆔 Ваш ID: `" + str(message.from_user.id) + "`", parse_mode="Markdown")
+
+@dp.message(lambda m: m.text in ["🔍 Поиск", "📁 Подборки", "🌪 Фильтр", "⚙️ Настройки", "🎁 Поделиться"])
+async def reply_handler(message: types.Message):
+    uid = message.from_user.id
+    save_user(uid)
+    if not await check_subscription(uid):
+        await message.answer("Подпишись на канал!", reply_markup=get_sub_kb())
+        return
+    txt = message.text
+    if txt == "🔍 Поиск":
+        await message.answer("🔍 **Поиск фильмов и сериалов**\n\nНапиши название кино в чат!", reply_markup=get_search_kb(), parse_mode="Markdown")
+    elif txt == "📁 Подборки":
+        await message.answer("📁 **Выбери категорию подборки:**", reply_markup=get_collections_kb(), parse_mode="Markdown")
+    elif txt == "🌪 Фильтр":
+        await message.answer("🌪 **Выбери параметры поиска:**", reply_markup=get_filter_kb(), parse_mode="Markdown")
+    elif txt == "⚙️ Настройки":
+        await message.answer("⚙️ **Настройки**\n🆔 `" + str(uid) + "`", reply_markup=get_settings_kb(), parse_mode="Markdown")
+    elif txt == "🎁 Поделиться":
+        me = await bot.get_me()
+        ref = "https://t.me/" + str(me.username) + "?start=ref_" + str(uid)
+        refs_count = get_referral_count(uid)
+        txt_share = "🎁 **Приглашай друзей в KINOrave!**\n\n👥 Приглашено: **" + str(refs_count) + "**\n\n🔗 Ссылка:\n`" + ref + "`"
+        await message.answer(txt_share, reply_markup=get_share_kb(me.username, uid), parse_mode="Markdown")
+
+@dp.callback_query(lambda c: c.data == "check_sub")
+async def sub_callback(callback: types.CallbackQuery):
+    if await check_subscription(callback.from_user.id):
+        await callback.message.delete()
+        await callback.message.answer("🎉 Подписка подтверждена!", reply_markup=get_main_kb())
+        await callback.message.answer("🎬 Добро пожаловать в KINOrave!", reply_markup=get_start_kb(), parse_mode="Markdown")
+    else:
+        await callback.answer("❌ Подпишись на канал для доступа!", show_alert=True)
+
+# Функция для отправки случайного фильма (Кинорулетка)
+async def send_random_movie(message_or_callback):
+    url = "https://api.themoviedb.org/3/movie/top_rated"
+    page = random.randint(1, 5) # Берем случайную страницу из топовых
+    params = {"api_key": TMDB_API_KEY, "language": "ru-RU", "page": page}
+    
+    try:
+        async with aiohttp.ClientSession(headers=HEADERS) as session:
+            async with session.get(url, params=params, timeout=5) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    results = data.get('results', [])
+                    if results:
+                        item = random.choice(results)
+                        t = item.get('title') or item.get('name') or "Фильм"
+                        rat = item.get('vote_average', 0)
+                        date = item.get('release_date') or item.get('first_air_date') or "0000"
+                        year = date.split('-')[0]
+                        poster = item.get('poster_path')
+                        overview = item.get('overview') or "Описание пока отсутствует."
+                        
+                        caption = "🎲 **Кинорулетка KINOrave**\n\n🎬 **" + str(t) + "** (" + str(year) + ")\n⭐ Рейтинг: " + str(round(rat, 1)) + " / 10\n\n" + str(overview)[:350] + "..."
+                        kb = get_movie_kb(t)
+                        
+                        target_msg = message_or_callback.message if isinstance(message_or_callback, types.CallbackQuery) else message_or_callback
+                        
+                        if poster:
+                            try:
+                                await target_msg.answer_photo(photo="https://image.tmdb.org/t/p/w500" + str(poster), caption=caption, reply_markup=kb, parse_mode="Markdown")
+                                return
+                            except Exception:
+                                pass
+                        await target_msg.answer(caption, reply_markup=kb, parse_mode="Markdown")
+    except Exception as e:
+        logging.error("Ошибка рулетки: " + str(e))
+
+# Функция для вывода ТОП-10 фильмов недели
+async def send_top_movies(callback: types.CallbackQuery):
+    url = "https://api.themoviedb.org/3/trending/movie/week"
+    params = {"api_key": TMDB_API_KEY, "language": "ru-RU"}
+    
+    try:
+        async with aiohttp.ClientSession(headers=HEADERS) as session:
+            async with session.get(url, params=params, timeout=5) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    items = data.get('results', [])[:10]
+                    text = "🏆 **ТОП-10 фильмов недели по версии KINOrave:**\n\n"
+                    for idx, item in enumerate(items, 1):
+                        t = item.get('title') or item.get('name') or "Фильм"
+                        rat = item.get('vote_average', 0)
+                        text += f"{idx}. **{t}** ⭐ {round(rat, 1)}\n"
+                    text += "\n💡 *Просто напиши название любого фильма из списка в чат для просмотра!*"
+                    
+                    await callback.message.edit_text(text, reply_markup=get_collections_kb(), parse_mode="Markdown")
+    except Exception:
+        await callback.answer("⚠️ Не удалось загрузить топ.", show_alert=True)
+
+@dp.callback_query()
+async def callbacks(callback: types.CallbackQuery):
+    d = callback.data
+    uid = callback.from_user.id
+    
+    if d == "roulette":
+        await callback.answer("🎲 Крутим кинорулетку...")
+        await send_random_movie(callback)
+    elif d == "top_list":
+        await send_top_movies(callback)
+    elif d == "open_settings":
+        await callback.message.edit_text("⚙️ **Настройки**\n🆔 `" + str(uid) + "`", reply_markup=get_settings_kb(), parse_mode="Markdown")
+    elif d == "open_collections":
+        await callback.message.edit_text("📁 **Выбери категорию подборки:**", reply_markup=get_collections_kb(), parse_mode="Markdown")
+    elif d == "open_filter":
+        await callback.message.edit_text("🌪 **Выбери параметры поиска:**", reply_markup=get_filter_kb(), parse_mode="Markdown")
+    elif d == "open_share":
+        me = await bot.get_me()
+        ref = "https://t.me/" + str(me.username) + "?start=ref_" + str(uid)
+        refs_count = get_referral_count(uid)
+        txt = "🎁 **Приглашай друзей в KINOrave!**\n\n👥 Приглашено: **" + str(refs_count) + "**\n\n🔗 Ссылка:\n`" + ref + "`"
+        await callback.message.edit_text(txt, reply_markup=get_share_kb(me.username, uid), parse_mode="Markdown")
+    elif d == "back_start":
+        await callback.message.edit_text("🎬 **KINOrave**\n\n🍿 Выбирай разделы или пиши название фильма.", reply_markup=get_start_kb(), parse_mode="Markdown")
+    elif d.startswith("genre_") or d.startswith("col_"):
+        await callback.answer("✅ Параметр применен! Нажми «Искать по каталогу» выше.", show_alert=True)
+    elif d == "f_reset":
+        await callback.answer("🔄 Фильтры сброшены!", show_alert=True)
+    else:
+        await callback.answer("Готово!", show_alert=True)
+
+@dp.inline_query()
+async def inline_search(query: InlineQuery):
+    uid = query.from_user.id
+    save_user(uid)
+    if not await check_subscription(uid):
+        return
+
+    q = query.query.strip()
+    if not q:
+        url = "https://api.themoviedb.org/3/trending/all/day"
+        params = {"api_key": TMDB_API_KEY, "language": "ru-RU"}
+    else:
+        url = "https://api.themoviedb.org/3/search/multi"
+        params = {"api_key": TMDB_API_KEY, "language": "ru-RU", "query": q}
+
+    res = []
+    try:
+        async with aiohttp.ClientSession(headers=HEADERS) as session:
+            async with session.get(url, params=params, timeout=5) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    for idx, item in enumerate(data.get('results', [])[:12]):
+                        t = item.get('title') or item.get('name') or "Фильм"
+                        rat = item.get('vote_average', 0)
+                        date = item.get('release_date') or item.get('first_air_date') or "0000"
+                        year = date.split('-')[0]
+                        poster = item.get('poster_path')
+                        desc = "tmdb: " + str(round(rat, 1)) + " | " + str(year)
+                        thumb = "https://image.tmdb.org/t/p/w185" + str(poster) if poster else "https://via.placeholder.com/150"
+                        caption = "🎬 **" + str(t) + "** (" + str(year) + ")\n⭐ Рейтинг: " + str(round(rat, 1)) + " / 10\n\n" + str(item.get('overview', 'Описание пока отсутствует.'))[:350]
+                        res.append(InlineQueryResultArticle(
+                            id=str(idx), title=t, description=desc, thumbnail_url=thumb,
+                            input_message_content=InputTextMessageContent(message_text=caption, parse_mode="Markdown"),
+                            reply_markup=get_movie_kb(t)
+                        ))
+        await query.answer(res, cache_time=1)
+    except Exception as e:
+        logging.error("Ошибка inline_search: " + str(e))
+
+@dp.message()
+async def text_search(message: types.Message):
+    uid = message.from_user.id
+    save_user(uid)
+    if not await check_subscription(uid):
+        await message.answer("Для поиска подпишитесь на канал KINOrave!", reply_markup=get_sub_kb())
+        return
+
+    q = message.text
+    if not q or q.startswith("/"):
+        return
+
+    url = "https://api.themoviedb.org/3/search/multi"
+    params = {"api_key": TMDB_API_KEY, "language": "ru-RU", "query": q}
+
+    try:
+        async with aioh
