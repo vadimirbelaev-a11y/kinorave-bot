@@ -1,10 +1,11 @@
 import asyncio
 import logging
 import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import aiohttp
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
-from aiohttp import web
 
 # Вставляем твои ключи
 BOT_TOKEN = "8410105070:AAHG_21VHz26hQge2-_pvUipMEtxgz57xuc"
@@ -49,27 +50,28 @@ async def search_movie(message: types.Message):
             else:
                 await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
 
-# Заглушка веб-сервера для Render (чтобы бесплатный Web Service не падал)
-async def handle_ping(request):
-    return web.Response(text="Bot is running!")
+# Заглушка порта через стандартную библиотеку Python (без сторонних библиотек)
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
+    server.serve_forever()
 
 async def main():
     logging.basicConfig(level=logging.INFO)
     
-    # Сбрасываем старый вебхук Livegram
+    # Запускаем простейший веб-сервер в отдельном потоке
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+    
+    # Сбрасываем старый вебхук
     await bot.delete_webhook(drop_pending_updates=True)
     
-    # Запускаем фоновый веб-сервер на порту, который запрашивает Render
-    app = web.Application()
-    app.router.add_get("/", handle_ping)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    
-    port = int(os.environ.get("PORT", 10000))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    asyncio.create_task(site.start())
-    
-    # Запускаем самого бота
+    # Запускаем бота
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
