@@ -15,7 +15,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # ================= CONFIGURATION =================
-BOT_TOKEN = "8410105070:AAHUuktDtUm_ICmRiRx0HghwsNkfYcNYD0Y"
+BOT_TOKEN = "8410105070:AAE_MutGt7pq1WPZDFgTJ4zP6jkE2F_ftaM"
 KINOPOISK_API_KEY = "8c1e3d22-0321-4952-a86f-37f3d9d3000f"
 ADMIN_ID = 6444735646
 REQUIRED_CHANNEL = "@kinorave_tg"
@@ -93,7 +93,7 @@ def remove_from_favorites(user_id, movie_id):
         del favs[user_str][str(movie_id)]
         save_favorites(favs)
 
-# ================= SECURITY MIDDLEWARE (ЗАЩИТА ОТ КИБЕРАТАК) =================
+# ================= SECURITY MIDDLEWARE =================
 @dp.message.outer_middleware()
 @dp.callback_query.outer_middleware()
 async def security_middleware(handler, event, data):
@@ -103,7 +103,7 @@ async def security_middleware(handler, event, data):
     now = time.time()
     if user_id != ADMIN_ID:
         last_time = last_request_time.get(user_id, 0)
-        if now - last_time < 0.5:
+        if now - last_time < 0.4:
             if isinstance(event, types.CallbackQuery):
                 await event.answer("⚠️ Слишком частые запросы!", show_alert=True)
             return
@@ -134,10 +134,7 @@ def get_reply_keyboard():
     )
 
 async def search_kinopoisk(query: str):
-    cleaned_query = re.sub(r'[^\w\sа-яА-ЯёЁіІїЇєЄґҐ]', '', query).strip().lower()
-    if not cleaned_query:
-        cleaned_query = query.strip()
-
+    cleaned_query = query.strip()
     url = f"https://api.kinopoisk.dev/v1.4/movie/search?page=1&limit=5&query={cleaned_query}"
     headers = {"X-API-KEY": KINOPOISK_API_KEY, "accept": "application/json"}
     async with aiohttp.ClientSession() as session:
@@ -145,9 +142,22 @@ async def search_kinopoisk(query: str):
             async with session.get(url, headers=headers) as resp:
                 if resp.status == 200:
                     data = await resp.json()
+                    docs = data.get("docs", [])
+                    if docs:
+                        return docs
+        except Exception as e:
+            logging.error(f"API Error 1: {e}")
+
+    # Запасной поиск по общему списку через фильтр по названию
+    fallback_url = f"https://api.kinopoisk.dev/v1.4/movie?page=1&limit=5&page=1&name={cleaned_query}"
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(fallback_url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
                     return data.get("docs", [])
         except Exception as e:
-            logging.error(f"API Error: {e}")
+            logging.error(f"API Error 2: {e}")
     return []
 
 async def get_collection(category: str):
@@ -286,7 +296,7 @@ async def cmd_search_handler(event: types.Message | types.CallbackQuery, state: 
         await event.answer("⚠️ Подпишитесь на канал @kinorave_tg !")
         return
     await state.set_state(SearchStates.waiting_for_query)
-    text = "🔍 Введите название фильма или сериала для поиска (можно с маленькой буквы):"
+    text = "🔍 Введите название фильма или сериала для поиска:"
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]])
     
     if isinstance(event, types.CallbackQuery):
@@ -309,7 +319,8 @@ async def process_search_query(message: types.Message, state: FSMContext):
         year = movie.get("year", "Н/Д")
         rating = movie.get("rating", {}).get("kp", "Н/Д")
         desc = html.escape(movie.get("description", "Описание отсутствует.")[:200]) + "..."
-        poster = movie.get("poster", {}).get("url")
+        poster_info = movie.get("poster")
+        poster = poster_info.get("url") if poster_info else None
         
         caption = f"🎬 <b>{title}</b> ({year})\n⭐ Рейтинг: {rating}\n\n📝 {desc}"
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -459,7 +470,8 @@ async def show_collection_items(callback: types.CallbackQuery):
     movie_id = movie.get("id")
     title = html.escape(movie.get("name") or movie.get("alternativeName", "Фильм"))
     rating = movie.get("rating", {}).get("kp", "—")
-    poster = movie.get("poster", {}).get("url")
+    poster_info = movie.get("poster")
+    poster = poster_info.get("url") if poster_info else None
     
     text = f"🎬 <b>{title}</b>\n⭐ Рейтинг: {rating}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -568,10 +580,10 @@ async def set_commands(bot: Bot):
     await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
 
 async def main():
-    # Удаляем вебхук перед запуском поллинга, чтобы избежать конфликтов на Render
+    # Очищаем вебхук для чистого старта с новым токеном без конфликтов
     await bot.delete_webhook(drop_pending_updates=True)
     await set_commands(bot)
-    logging.info("Bot KINOrave successfully started!")
+    logging.info("Bot KINOrave successfully started with new token!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
