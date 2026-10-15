@@ -10,7 +10,8 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 logging.basicConfig(level=logging.INFO)
 
 # Твои ключи
-BOT_TOKEN = "8410105070:AAHG_21VHz26hQge2-_pvUipMEtxgz57xuc"
+BOT_TOKEN = "8410105070:AAHUuktDtUm_ICmRiRx
+0HghwsNkfYcNYD0Y"
 TMDB_API_KEY = "e2d7e4ba3b610d32bb5826f04d026bd6"
 
 # Получаем внешний URL от Render автоматически
