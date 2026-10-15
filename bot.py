@@ -1,78 +1,106 @@
-import asyncio
-import logging
 import os
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import logging
 import aiohttp
+from aiohttp import web
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
-# Вставляем твои ключи
+# Включаем логирование, чтобы видеть всё, что происходит
+logging.basicConfig(level=logging.INFO)
+
+# Твои ключи
 BOT_TOKEN = "8410105070:AAHG_21VHz26hQge2-_pvUipMEtxgz57xuc"
 TMDB_API_KEY = "e2d7e4ba3b610d32bb5826f04d026bd6"
+
+# Получаем внешний URL от Render автоматически
+RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
+WEBHOOK_PATH = f"/bot/{BOT_TOKEN}"
+WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
+
+# Порт для Render (по умолчанию 10000)
+PORT = int(os.environ.get("PORT", 10000))
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    await message.answer("Привет! Я бот Кинораев. Напиши мне название фильма или сериала, и я найду его для тебя!")
+    try:
+        await message.answer("Привет! Я бот Кинораев. Напиши мне название фильма или сериала, и я найду его для тебя!")
+    except Exception as e:
+        logging.error(f"Ошибка в команде старт: {e}")
 
 @dp.message()
 async def search_movie(message: types.Message):
     query = message.text
+    if not query:
+        return
+        
     url = f"https://api.themoviedb.org/3/search/multi?api_key={TMDB_API_KEY}&language=ru-RU&query={query}"
     
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            data = await response.json()
-            
-            if not data.get('results'):
-                await message.answer("Ничего не найдено, попробуй другое название!")
-                return
-            
-            item = data['results'][0]
-            title = item.get('title') or item.get('name') or "Без названия"
-            overview = item.get('overview') or "Описание отсутствует."
-            poster_path = item.get('poster_path')
-            
-            text = f"🍿 **{title}**\n\n{overview[:300]}..."
-            
-            keyboard = types.InlineKeyboardMarkup(
-                inline_keyboard=[[
-                    types.InlineKeyboardButton(text="🎬 Смотреть", url=f"https://www.google.com/search?q={title}+смотреть+онлайн")
-                ]]
-            )
-            
-            if poster_path:
-                poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}"
-                await message.answer_photo(photo=poster_url, caption=text, reply_markup=keyboard, parse_mode="Markdown")
-            else:
-                await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as response:
+                if response.status != 200:
+                    await message.answer("Ошибка связи с сервером фильмов. Попробуй позже!")
+                    return
+                
+                data = await response.json()
+                
+                if not data.get('results'):
+                    await message.answer("Ничего не найдено, попробуй другое название!")
+                    return
+                
+                item = data['results'][0]
+                title = item.get('title') or item.get('name') or "Без названия"
+                overview = item.get('overview') or "Описание отсутствует."
+                poster_path = item.get('poster_path')
+                
+                text = f"🍿 **{title}**\n\n{overview[:300]}..."
+                
+                keyboard = types.InlineKeyboardMarkup(
+                    inline_keyboard=[[
+                        types.InlineKeyboardButton(text="🎬 Смотреть", url=f"https://www.google.com/search?q={title}+смотреть+онлайн")
+                    ]]
+                )
+                
+                if poster_path:
+                    poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}"
+                    try:
+                        await message.answer_photo(photo=poster_url, caption=text, reply_markup=keyboard, parse_mode="Markdown")
+                    except Exception:
+                        await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+                else:
+                    await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+                    
+    except Exception as e:
+        logging.error(f"Ошибка при поиске: {e}")
+        await message.answer("Произошла ошибка при поиске фильма. Попробуй позже!")
 
-# Заглушка порта через стандартную библиотеку Python (без сторонних библиотек)
-class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
+async def on_startup(bot: Bot):
+    # Устанавливаем вебхук при старте
+    try:
+        await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
+        logging.info(f"Вебхук успешно установлен: {WEBHOOK_URL}")
+    except Exception as e:
+        logging.error(f"Не удалось установить вебхук: {e}")
 
-def run_dummy_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
-    server.serve_forever()
-
-async def main():
-    logging.basicConfig(level=logging.INFO)
+def main():
+    app = web.Application()
     
-    # Запускаем простейший веб-сервер в отдельном потоке
-    threading.Thread(target=run_dummy_server, daemon=True).start()
+    # Настраиваем обработчик запросов от Telegram
+    webhook_requests_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+    )
+    webhook_requests_handler.register(app, path=WEBHOOK_PATH)
     
-    # Сбрасываем старый вебхук
-    await bot.delete_webhook(drop_pending_updates=True)
+    dp.startup.register(on_startup)
+    setup_application(app, dp, bot=bot)
     
-    # Запускаем бота
-    await dp.start_polling(bot)
+    # Запускаем веб-сервер, который мгновенно занимает порт и держит сервис живым
+    web.run_app(app, host="0.0.0.0", port=PORT)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
