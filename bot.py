@@ -55,35 +55,49 @@ async def check_subscription(user_id):
         return True
 
 def get_sub_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📢 Подписаться на KINOrave", url=CHANNEL_LINK)],
-        [InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sub")]
-    ])
+    b1 = InlineKeyboardButton(text="📢 Подписаться на KINOrave", url=CHANNEL_LINK)
+    b2 = InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sub")
+    return InlineKeyboardMarkup(inline_keyboard=[[b1], [b2]])
 
 def get_main_kb():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🔍 Поиск"), KeyboardButton(text="📁 Подборки"), KeyboardButton(text="🌪 Фильтр")],
-            [KeyboardButton(text="⚙️ Настройки"), KeyboardButton(text="🎁 Поделиться")]
-        ],
-        resize_keyboard=True
-    )
+    r1 = [KeyboardButton(text="🔍 Поиск"), KeyboardButton(text="📁 Подборки"), KeyboardButton(text="🌪 Фильтр")]
+    r2 = [KeyboardButton(text="⚙️ Настройки"), KeyboardButton(text="🎁 Поделиться")]
+    return ReplyKeyboardMarkup(keyboard=[r1, r2], resize_keyboard=True)
 
 def get_start_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💡 Инструкция", callback_data="guide"), InlineKeyboardButton(text="⚙️ Настройки", callback_data="open_settings")],
-        [InlineKeyboardButton(text="🔍 Начать поиск", switch_inline_query_current_chat="")]
-    ])
+    b1 = InlineKeyboardButton(text="💡 Инструкция", callback_data="guide")
+    b2 = InlineKeyboardButton(text="⚙️ Настройки", callback_data="open_settings")
+    b3 = InlineKeyboardButton(text="🔍 Начать поиск", switch_inline_query_current_chat="")
+    return InlineKeyboardMarkup(inline_keyboard=[[b1, b2], [b3]])
 
 def get_search_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💡 Инструкция", callback_data="guide"), InlineKeyboardButton(text="⤴️ Поделиться", callback_data="open_share")],
-        [InlineKeyboardButton(text="📁 Подборки", callback_data="open_collections"), InlineKeyboardButton(text="🌪 Фильтры", callback_data="open_filter")],
-        [InlineKeyboardButton(text="⚙️ Настройки", callback_data="open_settings")],
-        [InlineKeyboardButton(text="🔍 Начать поиск", switch_inline_query_current_chat="")]
-    ])
+    b1 = InlineKeyboardButton(text="💡 Инструкция", callback_data="guide")
+    b2 = InlineKeyboardButton(text="⤴️ Поделиться", callback_data="open_share")
+    b3 = InlineKeyboardButton(text="📁 Подборки", callback_data="open_collections")
+    b4 = InlineKeyboardButton(text="🌪 Фильтры", callback_data="open_filter")
+    b5 = InlineKeyboardButton(text="⚙️ Настройки", callback_data="open_settings")
+    b6 = InlineKeyboardButton(text="🔍 Начать поиск", switch_inline_query_current_chat="")
+    return InlineKeyboardMarkup(inline_keyboard=[[b1, b2], [b3, b4], [b5], [b6]])
 
 def get_collections_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔥 Тренды дня", callback_data="col_trend"), InlineKeyboardButton(text="🌟 Популярное", callback_data="col_pop")],
-        [InlineKeyboardButton(text="🎬 Новинки фильмов", callback_data="col_movies"), Inline
+    b1 = InlineKeyboardButton(text="🔥 Тренды дня", callback_data="col_trend")
+    b2 = InlineKeyboardButton(text="🌟 Популярное", callback_data="col_pop")
+    b3 = InlineKeyboardButton(text="🎬 Новинки фильмов", callback_data="col_movies")
+    b4 = InlineKeyboardButton(text="📺 Новинки сериалов", callback_data="col_shows")
+    b5 = InlineKeyboardButton(text="◀️ Назад в меню", callback_data="back_start")
+    return InlineKeyboardMarkup(inline_keyboard=[[b1, b2], [b3, b4], [b5]])
+
+def get_filter_kb():
+    b1 = InlineKeyboardButton(text="💥 Боевики", callback_data="genre_action")
+    b2 = InlineKeyboardButton(text="😂 Комедии", callback_data="genre_comedy")
+    b3 = InlineKeyboardButton(text="🎭 Драмы", callback_data="genre_drama")
+    b4 = InlineKeyboardButton(text="👻 Ужасы", callback_data="genre_horror")
+    b5 = InlineKeyboardButton(text="🚀 Фантастика", callback_data="genre_scifi")
+    b6 = InlineKeyboardButton(text="❤️ Мелодрамы", callback_data="genre_romance")
+    b7 = InlineKeyboardButton(text="🔄 Сбросить фильтр", callback_data="f_reset")
+    b8 = InlineKeyboardButton(text="🔍 Искать по каталогу", switch_inline_query_current_chat="")
+    b9 = InlineKeyboardButton(text="◀️ Назад", callback_data="back_start")
+    return InlineKeyboardMarkup(inline_keyboard=[[b1, b2], [b3, b4], [b5, b6], [b7], [b8], [b9]])
+
+def get_settings_kb():
+    b1 = InlineKeyboardButton(text="
