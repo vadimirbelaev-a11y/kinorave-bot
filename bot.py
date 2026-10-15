@@ -49,7 +49,6 @@ def save_user(user_id: int, referrer_id: int = None):
         with open(USERS_FILE, "a") as f:
             f.write(str(user_id) + "\n")
             
-        # Если пришел по реферальной ссылке и это не он сам
         if referrer_id and referrer_id != user_id:
             with open(REFS_FILE, "a") as f:
                 f.write(f"{referrer_id}:{user_id}\n")
@@ -106,12 +105,9 @@ def get_share_kb(username, uid):
 
 def get_movie_kb(title):
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎙 Озвучка", callback_data="voice"), InlineKeyboardButton(text="🔮 Качество", callback_data="quality")], [InlineKeyboardButton(text="💬 Наш канал", url=CHANNEL_LINK), InlineKeyboardButton(text="⤴️ Поделиться", switch_inline_query=title)], [InlineKeyboardButton(text="📺 Трансляция TV", callback_data="tv"), InlineKeyboardButton(text="🎲 Ещё фильм", callback_data="roulette")], [InlineKeyboardButton(text="🔍 Искать дальше", switch_inline_query_current_chat="")]])
-
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
-    
-    # Обработка реферального параметра вида /start ref_123456
     args = message.text.split()
     referrer_id = None
     if len(args) > 1 and args[1].startswith("ref_"):
@@ -121,7 +117,6 @@ async def start_cmd(message: types.Message):
             pass
 
     save_user(user_id, referrer_id)
-    
     try: await message.delete()
     except Exception: pass
     
@@ -182,17 +177,10 @@ async def share_cmd(message: types.Message):
     if not await check_subscription(uid):
         await message.answer("Подпишись на канал!", reply_markup=get_sub_kb())
         return
-        
     me = await bot.get_me()
     ref = "https://t.me/" + str(me.username) + "?start=ref_" + str(uid)
     refs_count = get_referral_count(uid)
-    
-    txt = (
-        "🎁 **Приглашай друзей в KINOrave!**\n\n"
-        "👥 Приглашено друзей: **" + str(refs_count) + "**\n\n"
-        "🔗 Твоя персональная ссылка:\n`" + ref + "`\n\n"
-        "📌 *Делись ссылкой с друзьями и следи за своими бонусами!*"
-    )
+    txt = "🎁 **Приглашай друзей в KINOrave!**\n\n👥 Приглашено друзей: **" + str(refs_count) + "**\n\n🔗 Твоя персональная ссылка:\n`" + ref + "`"
     await message.answer(txt, reply_markup=get_share_kb(me.username, uid), parse_mode="Markdown")
 
 @dp.message(Command("stats"))
@@ -233,12 +221,10 @@ async def sub_callback(callback: types.CallbackQuery):
     else:
         await callback.answer("❌ Подпишись на канал для доступа!", show_alert=True)
 
-# Функция для отправки случайного фильма (Кинорулетка)
 async def send_random_movie(message_or_callback):
     url = "https://api.themoviedb.org/3/movie/top_rated"
-    page = random.randint(1, 5) # Берем случайную страницу из топовых
+    page = random.randint(1, 5)
     params = {"api_key": TMDB_API_KEY, "language": "ru-RU", "page": page}
-    
     try:
         async with aiohttp.ClientSession(headers=HEADERS) as session:
             async with session.get(url, params=params, timeout=5) as r:
@@ -253,12 +239,9 @@ async def send_random_movie(message_or_callback):
                         year = date.split('-')[0]
                         poster = item.get('poster_path')
                         overview = item.get('overview') or "Описание пока отсутствует."
-                        
                         caption = "🎲 **Кинорулетка KINOrave**\n\n🎬 **" + str(t) + "** (" + str(year) + ")\n⭐ Рейтинг: " + str(round(rat, 1)) + " / 10\n\n" + str(overview)[:350] + "..."
                         kb = get_movie_kb(t)
-                        
                         target_msg = message_or_callback.message if isinstance(message_or_callback, types.CallbackQuery) else message_or_callback
-                        
                         if poster:
                             try:
                                 await target_msg.answer_photo(photo="https://image.tmdb.org/t/p/w500" + str(poster), caption=caption, reply_markup=kb, parse_mode="Markdown")
@@ -269,11 +252,9 @@ async def send_random_movie(message_or_callback):
     except Exception as e:
         logging.error("Ошибка рулетки: " + str(e))
 
-# Функция для вывода ТОП-10 фильмов недели
 async def send_top_movies(callback: types.CallbackQuery):
     url = "https://api.themoviedb.org/3/trending/movie/week"
     params = {"api_key": TMDB_API_KEY, "language": "ru-RU"}
-    
     try:
         async with aiohttp.ClientSession(headers=HEADERS) as session:
             async with session.get(url, params=params, timeout=5) as r:
@@ -286,7 +267,6 @@ async def send_top_movies(callback: types.CallbackQuery):
                         rat = item.get('vote_average', 0)
                         text += f"{idx}. **{t}** ⭐ {round(rat, 1)}\n"
                     text += "\n💡 *Просто напиши название любого фильма из списка в чат для просмотра!*"
-                    
                     await callback.message.edit_text(text, reply_markup=get_collections_kb(), parse_mode="Markdown")
     except Exception:
         await callback.answer("⚠️ Не удалось загрузить топ.", show_alert=True)
@@ -295,7 +275,6 @@ async def send_top_movies(callback: types.CallbackQuery):
 async def callbacks(callback: types.CallbackQuery):
     d = callback.data
     uid = callback.from_user.id
-    
     if d == "roulette":
         await callback.answer("🎲 Крутим кинорулетку...")
         await send_random_movie(callback)
@@ -328,7 +307,6 @@ async def inline_search(query: InlineQuery):
     save_user(uid)
     if not await check_subscription(uid):
         return
-
     q = query.query.strip()
     if not q:
         url = "https://api.themoviedb.org/3/trending/all/day"
@@ -336,7 +314,6 @@ async def inline_search(query: InlineQuery):
     else:
         url = "https://api.themoviedb.org/3/search/multi"
         params = {"api_key": TMDB_API_KEY, "language": "ru-RU", "query": q}
-
     res = []
     try:
         async with aiohttp.ClientSession(headers=HEADERS) as session:
@@ -368,13 +345,70 @@ async def text_search(message: types.Message):
     if not await check_subscription(uid):
         await message.answer("Для поиска подпишитесь на канал KINOrave!", reply_markup=get_sub_kb())
         return
-
     q = message.text
     if not q or q.startswith("/"):
         return
-
     url = "https://api.themoviedb.org/3/search/multi"
     params = {"api_key": TMDB_API_KEY, "language": "ru-RU", "query": q}
-
     try:
-        async with aioh
+        async with aiohttp.ClientSession(headers=HEADERS) as session:
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=8)) as r:
+                if r.status != 200:
+                    await message.answer("⚠️ Ошибка сервера кинобазы. Попробуй еще раз!")
+                    return
+                data = await r.json()
+                items = data.get('results', [])
+                if not items:
+                    await message.answer("😔 Ничего не найдено. Проверь название и попробуй снова!")
+                    return
+                item = None
+                for res_item in items:
+                    if res_item.get('media_type') in ['movie', 'tv'] or 'title' in res_item or 'name' in res_item:
+                        item = res_item
+                        break
+                if not item:
+                    item = items[0]
+                t = item.get('title') or item.get('name') or "Фильм"
+                rat = item.get('vote_average', 0)
+                date = item.get('release_date') or item.get('first_air_date') or "0000"
+                year = date.split('-')[0]
+                poster = item.get('poster_path')
+                overview = item.get('overview') if item.get('overview') else "Описание пока отсутствует."
+                caption = "🎬 **" + str(t) + "** (" + str(year) + ")\n⭐ Рейтинг: " + str(round(rat, 1)) + " / 10\n\n" + str(overview)[:350] + "..."
+                kb = get_movie_kb(t)
+                if poster:
+                    try:
+                        await message.answer_photo(photo="https://image.tmdb.org/t/p/w500" + str(poster), caption=caption, reply_markup=kb, parse_mode="Markdown")
+                        return
+                    except Exception as img_err:
+                        logging.error("Ошибка фото: " + str(img_err))
+                await message.answer(caption, reply_markup=kb, parse_mode="Markdown")
+    except Exception as e:
+        logging.error("Ошибка поиска: " + str(e))
+        await message.answer("⚠️ Произошла ошибка при поиске. Попробуй еще раз!")
+
+async def on_startup(bot: Bot):
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Запустить"),
+        BotCommand(command="search", description="Поиск"),
+        BotCommand(command="collections", description="Подборки"),
+        BotCommand(command="filter", description="Фильтр"),
+        BotCommand(command="settings", description="Настройки"),
+        BotCommand(command="share", description="Поделиться"),
+        BotCommand(command="stats", description="Статистика")
+    ])
+    try:
+        await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
+    except Exception:
+        pass
+
+def main():
+    app = web.Application()
+    webhook_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
+    webhook_handler.register(app, path=WEBHOOK_PATH)
+    dp.startup.register(on_startup)
+    setup_application(app, dp, bot=bot)
+    web.run_app(app, host="0.0.0.0", port=PORT)
+
+if __name__ == "__main__":
+    main()
