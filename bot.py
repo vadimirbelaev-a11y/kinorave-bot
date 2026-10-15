@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
 
 # Вставляем твои ключи
-BOT_TOKEN = "8410105070:AAE-J_2eT1RzJ9C6vGzJ0m3e8vR4xQ_9yL0"
+BOT_TOKEN = "8410105070:AAHG_21VHz26hQge2-_pvUipMEtxgz57xuc"
 TMDB_API_KEY = "e2d7e4ba3b610d32bb5826f04d026bd6"
 
 bot = Bot(token=BOT_TOKEN)
