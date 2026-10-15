@@ -1,598 +1,577 @@
 import os
-import random
-import logging
-import re
-import time
 import json
+import logging
+import random
+import re
+import html
 import aiohttp
-from aiohttp import web
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart, Command
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from aiogram.types import (
-    BotCommand,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    InlineQuery,
-    InlineQueryResultArticle,
-    InputTextMessageContent,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
-    FSInputFile
-)
+from datetime import datetime
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, BotCommand, BotCommandScopeDefault
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-logging.basicConfig(level=logging.INFO)
-
+# ================= CONFIGURATION =================
 BOT_TOKEN = "8410105070:AAHUuktDtUm_ICmRiRx0HghwsNkfYcNYD0Y"
-KP_API_KEY = "8c1e3d22-0321-4952-a86f-37f3d9d3000f"
-CHANNEL_LINK = "https://t.me/kinorave_tg"
-CHANNEL_USERNAME = "@kinorave_tg"
-
-# ТВЙ ЖЕСТКИЙ АДМИНСКИЙ ID
+KINOPOISK_API_KEY = "8c1e3d22-0321-4952-a86f-37f3d9d3000f"
 ADMIN_ID = 6444735646
+REQUIRED_CHANNEL = "@kinorave_tg"
+VPN_LINK = "https://t.me/FastFive_VPN_shop_bot"
 
-RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
-WEBHOOK_PATH = "/bot/" + BOT_TOKEN
-WEBHOOK_URL = RENDER_EXTERNAL_URL + WEBHOOK_PATH
-PORT = int(os.environ.get("PORT", 10000))
-
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
 USERS_FILE = "users.txt"
-REFS_FILE = "referrals.txt"
-FAV_FILE = "favorites.json"
+FAVORITES_FILE = "favorites.json"
 MAINTENANCE_FILE = "maintenance.txt"
 
-FLOOD_CONTROL = {}
-ATTACK_ALERT_COOLDOWN = {}
-FLOOD_LIMIT_SECONDS = 0.8
+logging.basicConfig(level=logging.INFO)
+bot = Bot(token=BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
 
-HEADERS = {
-    "X-API-KEY": KP_API_KEY,
-    "Content-Type": "application/json",
-    "User-Agent": "Mozilla/5.0"
-}
+last_request_time = {}
 
-def clean_title(text: str) -> str:
-    return re.sub(r'[^а-яa-z0-9]', '', text.lower())
+# ================= STATES =================
+class SearchStates(StatesGroup):
+    waiting_for_query = State()
 
-def is_maintenance() -> bool:
-    return os.path.exists(MAINTENANCE_FILE)
-
-def toggle_maintenance() -> bool:
-    if os.path.exists(MAINTENANCE_FILE):
-        os.remove(MAINTENANCE_FILE)
-        return False
-    else:
-        with open(MAINTENANCE_FILE, "w") as f:
-            f.write("ON")
-        return True
-
-def load_favorites() -> dict:
-    if os.path.exists(FAV_FILE):
-        try:
-            with open(FAV_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
-
-def save_favorites(favs: dict):
-    with open(FAV_FILE, "w", encoding="utf-8") as f:
-        json.dump(favs, f, ensure_ascii=False, indent=2)
-
-def add_to_favorites(user_id: int, movie_data: dict) -> bool:
-    favs = load_favorites()
-    uid_str = str(user_id)
-    if uid_str not in favs:
-        favs[uid_str] = []
-    for item in favs[uid_str]:
-        if item.get("id") == movie_data.get("id"):
-            return False
-    favs[uid_str].append(movie_data)
-    save_favorites(favs)
-    return True
-
-def get_user_favorites(user_id: int) -> list:
-    favs = load_favorites()
-    return favs.get(str(user_id), [])
-
-def save_user(user_id: int, referrer_id: int = None):
-    users = set()
-    if os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "r") as f:
-            users = set(line.strip() for line in f if line.strip())
-    if str(user_id) not in users:
-        with open(USERS_FILE, "a") as f:
-            f.write(str(user_id) + "\n")
-        if referrer_id and referrer_id != user_id:
-            with open(REFS_FILE, "a") as f:
-                f.write(f"{referrer_id}:{user_id}\n")
-
-def get_users_list() -> list:
+# ================= DATABASE & SECURITY HELPERS =================
+def load_users():
     if not os.path.exists(USERS_FILE):
-        return []
-    with open(USERS_FILE, "r") as f:
-        return [int(line.strip()) for line in f if line.strip()]
-
-def get_users_count():
-    return len(get_users_list())
-
-def get_referral_count(user_id: int) -> int:
-    if not os.path.exists(REFS_FILE):
-        return 0
-    count = 0
-    with open(REFS_FILE, "r") as f:
+        return {}
+    users = {}
+    with open(USERS_FILE, "r", encoding="utf-8") as f:
         for line in f:
-            parts = line.strip().split(":")
-            if len(parts) == 2 and parts[0] == str(user_id):
-                count += 1
-    return count
+            parts = line.strip().split(";")
+            if len(parts) >= 2:
+                users[int(parts[0])] = parts[1]
+    return users
 
-async def check_subscription(user_id):
+def save_user(user_id, reg_date):
+    users = load_users()
+    if user_id not in users:
+        users[user_id] = reg_date
+        with open(USERS_FILE, "a", encoding="utf-8") as f:
+            f.write(f"{user_id};{reg_date}\n")
+
+def is_maintenance_on():
+    if not os.path.exists(MAINTENANCE_FILE):
+        return False
+    with open(MAINTENANCE_FILE, "r", encoding="utf-8") as f:
+        return f.read().strip() == "ON"
+
+def set_maintenance(status: bool):
+    with open(MAINTENANCE_FILE, "w", encoding="utf-8") as f:
+        f.write("ON" if status else "OFF")
+
+def load_favorites():
+    if not os.path.exists(FAVORITES_FILE):
+        return {}
     try:
-        m = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-        return m.status in ["creator", "administrator", "member"]
-    except Exception:
+        with open(FAVORITES_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_favorites(favs):
+    with open(FAVORITES_FILE, "w", encoding="utf-8") as f:
+        json.dump(favs, f, ensure_ascii=False, indent=4)
+
+def add_to_favorites(user_id, movie_id, movie_title):
+    favs = load_favorites()
+    user_str = str(user_id)
+    if user_str not in favs:
+        favs[user_str] = {}
+    favs[user_str][str(movie_id)] = html.escape(movie_title)
+    save_favorites(favs)
+
+def remove_from_favorites(user_id, movie_id):
+    favs = load_favorites()
+    user_str = str(user_id)
+    if user_str in favs and str(movie_id) in favs[user_str]:
+        del favs[user_str][str(movie_id)]
+        save_favorites(favs)
+
+# ================= SECURITY MIDDLEWARE (ЗАЩИТА ОТ КИБЕРАТАК) =================
+@dp.message.outer_middleware()
+@dp.callback_query.outer_middleware()
+async def security_middleware(handler, event, data):
+    user_id = event.from_user.id if event.from_user else 0
+    
+    import time
+    now = time.time()
+    if user_id != ADMIN_ID:
+        last_time = last_request_time.get(user_id, 0)
+        if now - last_time < 0.5:
+            if isinstance(event, types.CallbackQuery):
+                await event.answer("⚠️ Слишком частые запросы!", show_alert=True)
+            return
+        last_request_time[user_id] = now
+
+    if is_maintenance_on() and user_id != ADMIN_ID:
+        text = "⚠️ <b>Внимание!</b> В боте проводятся технические работы и исправление ошибок. Пожалуйста, зайдите позже."
+        if isinstance(event, types.CallbackQuery):
+            await event.answer("⚠️ Ведутся техработы!", show_alert=True)
+        elif isinstance(event, types.Message):
+            await event.answer(text, parse_html="HTML")
+        return
+
+    return await handler(event, data)
+
+def get_reply_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="🔍"),
+                KeyboardButton(text="📦"),
+                KeyboardButton(text="🌪"),
+                KeyboardButton(text="⚙️"),
+                KeyboardButton(text="⭐")
+            ]
+        ],
+        resize_keyboard=True
+    )
+
+async def search_kinopoisk(query: str):
+    cleaned_query = re.sub(r'[^\w\sа-яА-ЯёЁіІїЇєЄґҐ]', '', query).strip().lower()
+    if not cleaned_query:
+        cleaned_query = query.strip()
+
+    url = f"https://api.kinopoisk.dev/v1.4/movie/search?page=1&limit=5&query={cleaned_query}"
+    headers = {"X-API-KEY": KINOPOISK_API_KEY, "accept": "application/json"}
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get("docs", [])
+        except Exception as e:
+            logging.error(f"API Error: {e}")
+    return []
+
+async def get_collection(category: str):
+    url = f"https://api.kinopoisk.dev/v1.4/movie?page=1&limit=10&sortField=rating.kp&sortType=-1"
+    headers = {"X-API-KEY": KINOPOISK_API_KEY, "accept": "application/json"}
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get("docs", [])
+        except Exception as e:
+            logging.error(f"Collection API Error: {e}")
+    return []
+
+async def check_sub(user_id: int):
+    try:
+        member = await bot.get_chat_member(chat_id=REQUIRED_CHANNEL, user_id=user_id)
+        return member.status not in ["left", "kicked"]
+    except:
         return True
 
-def get_sub_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📢 Подписаться на KINOrave", url=CHANNEL_LINK)], [InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sub")]])
-
-def get_main_kb():
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🔍 Поиск"), KeyboardButton(text="⭐ Избранное"), KeyboardButton(text="📁 Подборки")], [KeyboardButton(text="⚙️ Настройки"), KeyboardButton(text="🎁 Поделиться")]], resize_keyboard=True)
-
-def get_start_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔍 Открыть глобальный поиск", switch_inline_query_current_chat="")], [InlineKeyboardButton(text="⭐ Мое избранное", callback_data="show_favorites"), InlineKeyboardButton(text="⚙️ Настройки", callback_data="open_settings")]])
-
-def get_search_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔍 Начать поиск", switch_inline_query_current_chat="")], [InlineKeyboardButton(text="⭐ Избранное", callback_data="show_favorites"), KeyboardButton(text="📁 Подборки", callback_data="open_collections")]])
-
-def get_admin_kb():
-    m_status = "🔴 Отключить техобслуживание" if is_maintenance() else "🟢 Включить техобслуживание"
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=m_status, callback_data="admin_maint")],
-        [InlineKeyboardButton(text="📤 Выгрузить базу (.txt)", callback_data="admin_export")]
-    ])
-
-def get_attack_alert_kb():
-    maint_text = "🔴 Включить тех. обслуживание" if not is_maintenance() else "🟢 Выключить тех. обслуживание"
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=maint_text, callback_data="alert_toggle_maint")],
-        [InlineKeyboardButton(text="🛡 Сбросить угрозу", callback_data="alert_dismiss")]
-    ])
-
-def get_movie_kb(title, kp_id=None, is_serial=False):
-    kb_rows = [
-        [InlineKeyboardButton(text="📥 Получить медиафайл (MP4)", callback_data="getfile_" + str(kp_id if kp_id else "0"))]
+def get_main_menu_keyboard():
+    kb = [
+        [InlineKeyboardButton(text="💡 Инструкция", callback_data="help"), InlineKeyboardButton(text="⤴️ Поделиться", callback_data="share")],
+        [InlineKeyboardButton(text="🕘 История", callback_data="history"), InlineKeyboardButton(text="⭐ Избранное", callback_data="favorites")],
+        [InlineKeyboardButton(text="📦 Подборки", callback_data="collections"), InlineKeyboardButton(text="🌪 Фильтр", callback_data="filter")],
+        [InlineKeyboardButton(text="⚙️ Настройки", callback_data="settings")],
+        [InlineKeyboardButton(text="🔍 Начать поиск", callback_data="start_search")]
     ]
-    if is_serial:
-        kb_rows.append([InlineKeyboardButton(text="🔢 Выбрать сезон / серии", callback_data="seasons_" + str(kp_id))])
-    
-    kb_rows.extend([
-        [InlineKeyboardButton(text="⭐ В избранное", callback_data="fav_add_" + str(kp_id if kp_id else "0"))],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_start"), InlineKeyboardButton(text="Вперед ➡️", callback_data="next_item")],
-        [InlineKeyboardButton(text="🎵 Озвучка", callback_data="voice"), InlineKeyboardButton(text="🔮 Качество", callback_data="quality")],
-        [InlineKeyboardButton(text="🔔 Уведомлять", callback_data="notify")],
-        [InlineKeyboardButton(text="📺 TV Cast", callback_data="tv"), InlineKeyboardButton(text="ℹ️ Подробнее", callback_data="more")],
-        [InlineKeyboardButton(text="🔍 Поиск", switch_inline_query_current_chat=""), InlineKeyboardButton(text="💬 Канал", url=CHANNEL_LINK)]
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=kb_rows)
-@dp.message(CommandStart())
-async def start_cmd(message: types.Message):
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+# ================= HANDLERS: /start & ADMIN =================
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
     user_id = message.from_user.id
-    if is_maintenance() and user_id != ADMIN_ID:
-        await message.answer("🛠 **В боте проводятся плановые технические работы.**\n\nСкоро мы вернемся с обновлениями! 🎬", parse_mode="Markdown")
+    reg_date = datetime.now().strftime("%d.%m.%Y %H:%M")
+    save_user(user_id, reg_date)
+
+    if not await check_sub(user_id):
+        sub_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📢 Подписаться на канал", url=f"https://t.me/{REQUIRED_CHANNEL[1:]}")],
+            [InlineKeyboardButton(text="🔄 Проверить подписку", callback_data="check_sub")]
+        ])
+        await message.answer("⚠️ Для использования бота необходимо подписаться на наш канал!", reply_markup=sub_kb)
         return
 
-    args = message.text.split()
-    referrer_id = None
-    if len(args) > 1 and args[1].startswith("ref_"):
-        try: referrer_id = int(args[1].replace("ref_", ""))
-        except ValueError: pass
+    await show_welcome(message)
 
-    save_user(user_id, referrer_id)
-    try: await message.delete()
-    except Exception: pass
+async def show_welcome(message: types.Message, edit=False):
+    text = (
+        "🍿 <b>Привет, киноман!</b>\n\n"
+        "🔍 Для поиска используй кнопки ниже или отправь в сообщении название кино\n\n"
+        f"Подписывайся на наш канал — <a href=\"https://t.me/{REQUIRED_CHANNEL[1:]}\">Кинорейв</a>"
+    )
+    kb = get_main_menu_keyboard()
+    reply_kb = get_reply_keyboard()
     
-    if not await check_subscription(user_id):
-        await message.answer("👋 Привет, " + str(message.from_user.first_name) + "!\n\n🔒 Для доступа к каталогу подпишись на канал KINOrave:", reply_markup=get_sub_kb())
-        return
-        
-    txt = "🎬 **Добро пожаловать в KINOrave!**\n\n🍿 Напиши название фильма или сериала прямо в чат для поиска.\n\n💬 [Наш канал](" + CHANNEL_LINK + ")"
-    await message.answer(txt, reply_markup=get_start_kb(), parse_mode="Markdown", disable_web_page_preview=True)
-    await message.answer("✨ Главное меню управления:", reply_markup=get_main_kb())
+    if edit and isinstance(message, types.CallbackQuery):
+        await message.message.edit_text(text, parse_html="HTML", reply_markup=kb, disable_web_page_preview=True)
+    else:
+        await message.answer(text, parse_html="HTML", reply_markup=reply_kb)
+        await message.answer("👇 Главное меню:", reply_markup=kb)
 
 @dp.message(Command("admin"))
-async def admin_panel(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        await message.answer("⛔️ Доступ запрещен.")
-        return
-
-    maint_text = "ВКЛЮЧЕНО 🔴" if is_maintenance() else "ВЫКЛЮЧЕНО 🟢"
-    txt = (
-        f"🛠 **Защищенная админ-панель KINOrave**\n\n"
-        f"🛠 Тех. обслуживание: **{maint_text}**\n"
-        f"👥 Всего пользователей: **{get_users_count()}**\n\n"
-        f"📢 **Рассылка:** напишите `/broadcast [ваш текст]`"
-    )
-    await message.answer(txt, reply_markup=get_admin_kb(), parse_mode="Markdown")
-
-@dp.message(Command("broadcast"))
-async def broadcast_cmd(message: types.Message):
+async def cmd_admin(message: types.Message):
     if message.from_user.id != ADMIN_ID:
         return
     
-    text_to_send = message.text.replace("/broadcast", "").strip()
-    if not text_to_send:
-        await message.answer("⚠️ Введите текст для рассылки:\n`/broadcast Ваше сообщение здесь`", parse_mode="Markdown")
-        return
-
-    users = get_users_list()
-    success = 0
-    blocked = 0
+    status = "🔴 ВКЛЮЧЕНЫ (Бот на техобслуживании)" if is_maintenance_on() else "🟢 ОТКЛЮЧЕНЫ (Бот работает штатно)"
+    text = f"🛠 <b>Админ-панель</b>\n\nСтатус техработ: {status}"
     
-    status_msg = await message.answer(f"🚀 Запуск рассылки для {len(users)} зрителей...")
-
-    for uid in users:
-        try:
-            await bot.send_message(chat_id=uid, text=text_to_send, parse_mode="Markdown")
-            success += 1
-        except Exception:
-            blocked += 1
-
-    await status_msg.edit_text(f"✅ **Рассылка успешно завершена!**\n\n📬 Доставлено: `{success}`\n🚫 Заблокировали бота: `{blocked}`", parse_mode="Markdown")
-
-@dp.callback_query(lambda c: c.data.startswith("admin_"))
-async def admin_switcher(callback: types.CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer("⛔️ Доступ запрещен!", show_alert=True)
-        return
-
-    d = callback.data
-    if d == "admin_maint":
-        state = toggle_maintenance()
-        status_text = "включено 🔴" if state else "выключено 🟢"
-        await callback.answer(f"🛠 Техническое обслуживание {status_text}!", show_alert=True)
-    elif d == "admin_export":
-        if os.path.exists(USERS_FILE):
-            file = FSInputFile(USERS_FILE)
-            await callback.message.answer_document(file, caption="📁 База пользователей KINOrave")
-        else:
-            await callback.answer("⚠️ Файл базы пуст.", show_alert=True)
-        return
-
-    maint_text = "ВКЛЮЧЕНО 🔴" if is_maintenance() else "ВЫКЛЮЧЕНО 🟢"
-    txt = (
-        f"🛠 **Защищенная админ-панель KINOrave**\n\n"
-        f"🛠 Тех. обслуживание: **{maint_text}**\n"
-        f"👥 Всего пользователей: **{get_users_count()}**"
-    )
-    await callback.message.edit_text(txt, parse_mode="Markdown", reply_markup=get_admin_kb())
-
-@dp.callback_query(lambda c: c.data.startswith("alert_"))
-async def alert_callback_handler(callback: types.CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer("⛔️ Доступ запрещен!", show_alert=True)
-        return
+    builder = InlineKeyboardBuilder()
+    if is_maintenance_on():
+        builder.row(InlineKeyboardButton(text="🟢 Выключить техработы", callback_data="admin_maint_off"))
+    else:
+        builder.row(InlineKeyboardButton(text="🔴 Включить техработы", callback_data="admin_maint_on"))
+    builder.row(InlineKeyboardButton(text="⬅️ Закрыть", callback_data="back_to_main"))
     
-    d = callback.data
-    if d == "alert_toggle_maint":
-        state = toggle_maintenance()
-        st_text = "ВКЛЮЧЕНО 🔴 (Бот изолирован)" if state else "ВЫКЛЮЧЕНО 🟢 (Бот активен)"
-        await callback.message.edit_text(f"🚨 **Статус безопасности изменен!**\nТех. обслуживание: {st_text}", parse_mode="Markdown")
-        await callback.answer("Готово!")
-    elif d == "alert_dismiss":
-        await callback.message.edit_text("🛡 **Тревога сброшена.** Система работает в штатном режиме.", parse_mode="Markdown")
-        await callback.answer("Угроза отклонена.")
+    await message.answer(text, parse_html="HTML", reply_markup=builder.as_markup())
 
+@dp.callback_query(F.data == "admin_maint_on")
+async def cb_maint_on(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    set_maintenance(True)
+    await callback.message.edit_text("🔴 Режим технических работ успешно активирован!", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ В админку", callback_data="admin_back")]]))
+
+@dp.callback_query(F.data == "admin_maint_off")
+async def cb_maint_off(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    set_maintenance(False)
+    await callback.message.edit_text("🟢 Технические работы завершены!", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ В админку", callback_data="admin_back")]]))
+
+@dp.callback_query(F.data == "admin_back")
+async def cb_admin_back(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    await cmd_admin(callback.message)
+
+@dp.callback_query(F.data == "check_sub")
+async def cb_check_sub(callback: types.CallbackQuery, state: FSMContext):
+    if await check_sub(callback.from_user.id):
+        await callback.message.delete()
+        await show_welcome(callback.message)
+    else:
+        await callback.answer("❌ Вы еще не подписались на канал!", show_alert=True)
+
+# Нижняя панель (Reply)
+@dp.message(F.text == "🔍")
+async def reply_search(message: types.Message, state: FSMContext):
+    await cmd_search_handler(message, state)
+
+@dp.message(F.text == "📦")
+async def reply_collections(message: types.Message):
+    await cmd_collections(message)
+
+@dp.message(F.text == "🌪")
+async def reply_filter(message: types.Message):
+    await cmd_filter(message)
+
+@dp.message(F.text == "⚙️")
+async def reply_settings(message: types.Message):
+    await cmd_settings(message)
+
+@dp.message(F.text == "⭐")
+async def reply_favorites(message: types.Message):
+    await cb_favorites_list(message)
+
+# ================= SEARCH HANDLER =================
 @dp.message(Command("search"))
-async def search_cmd(message: types.Message):
-    if is_maintenance() and message.from_user.id != ADMIN_ID:
+@dp.callback_query(F.data == "start_search")
+async def cmd_search_handler(event: types.Message | types.CallbackQuery, state: FSMContext):
+    if not await check_sub(event.from_user.id):
+        await event.answer("⚠️ Подпишитесь на канал @kinorave_tg !")
         return
-    save_user(message.from_user.id)
-    try: await message.delete()
-    except Exception: pass
-    if not await check_subscription(message.from_user.id):
-        await message.answer("Подпишись на канал!", reply_markup=get_sub_kb())
+    await state.set_state(SearchStates.waiting_for_query)
+    text = "🔍 Введите название фильма или сериала для поиска (можно с маленькой буквы):"
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]])
+    
+    if isinstance(event, types.CallbackQuery):
+        await event.message.edit_text(text, reply_markup=kb)
+    else:
+        await event.answer(text, reply_markup=kb)
+
+@dp.message(SearchStates.waiting_for_query)
+async def process_search_query(message: types.Message, state: FSMContext):
+    query = message.text
+    movies = await search_kinopoisk(query)
+    
+    if not movies:
+        await message.answer("❌ Ничего не найдено по вашему запросу. Попробуйте написать название точнее.")
         return
-    await message.answer("🔍 **Глобальный поиск фильмов и сериалов**\n\nНапиши название в чат:", reply_markup=get_search_kb(), parse_mode="Markdown")
+
+    for movie in movies[:3]:
+        movie_id = movie.get("id")
+        title = html.escape(movie.get("name") or movie.get("alternativeName") or "Без названия")
+        year = movie.get("year", "Н/Д")
+        rating = movie.get("rating", {}).get("kp", "Н/Д")
+        desc = html.escape(movie.get("description", "Описание отсутствует.")[:200]) + "..."
+        poster = movie.get("poster", {}).get("url")
+        
+        caption = f"🎬 <b>{title}</b> ({year})\n⭐ Рейтинг: {rating}\n\n📝 {desc}"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="▶️ Смотреть", callback_data=f"watch_{movie_id}")],
+            [InlineKeyboardButton(text="⭐ В избранное", callback_data=f"fav_add_{movie_id}_{title[:15]}")],
+            [InlineKeyboardButton(text="⬅️ В меню", callback_data="back_to_main")]
+        ])
+        
+        if poster:
+            await message.answer_photo(photo=poster, caption=caption, parse_html="HTML", reply_markup=kb)
+        else:
+            await message.answer(text=caption, parse_html="HTML", reply_markup=kb)
+    
+    await state.clear()
+# ================= FAVORITES HANDLERS =================
+@dp.callback_query(F.data.startswith("fav_add_"))
+async def cb_add_favorites(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    movie_id = parts[2]
+    movie_title = "_".join(parts[3:])
+    add_to_favorites(callback.from_user.id, movie_id, movie_title)
+    await callback.answer("⭐ Фильм успешно добавлен в Избранное!", show_alert=True)
 
 @dp.message(Command("favorites"))
-async def favorites_cmd(message: types.Message):
-    uid = message.from_user.id
-    if is_maintenance() and uid != ADMIN_ID:
-        return
-    save_user(uid)
-    if not await check_subscription(uid):
-        await message.answer("Подпишись на канал!", reply_markup=get_sub_kb())
-        return
-    user_favs = get_user_favorites(uid)
+@dp.callback_query(F.data == "favorites")
+async def cb_favorites_list(event: types.Message | types.CallbackQuery):
+    user_id = event.from_user.id
+    favs = load_favorites()
+    user_favs = favs.get(str(user_id), {})
+    
     if not user_favs:
-        await message.answer("⭐ **Ваше избранное пусто!**\n\nНажимайте кнопку «⭐ В избранное» под карточками фильмов, чтобы собирать свою коллекцию.", parse_mode="Markdown")
-        return
-    txt = "⭐ **Ваши сохраненные фильмы и сериалы:**\n\n"
-    for idx, item in enumerate(user_favs, 1):
-        txt += f"{idx}. **{item.get('title')}** ({item.get('year')}) — ⭐ {item.get('rating')}\n"
-    await message.answer(txt, parse_mode="Markdown")
-
-@dp.message(lambda m: m.text in ["🔍 Поиск", "⭐ Избранное", "📁 Подборки", "⚙️ Настройки", "🎁 Поделиться"])
-async def reply_handler(message: types.Message):
-    uid = message.from_user.id
-    if is_maintenance() and uid != ADMIN_ID:
-        return
-    save_user(uid)
-    if not await check_subscription(uid):
-        await message.answer("Подпишись на канал!", reply_markup=get_sub_kb())
-        return
-    txt = message.text
-    if txt == "🔍 Поиск":
-        await message.answer("🔍 **Глобальный поиск**\n\nНапиши название кино в чат!", reply_markup=get_search_kb(), parse_mode="Markdown")
-    elif txt == "⭐ Избранное":
-        user_favs = get_user_favorites(uid)
-        if not user_favs:
-            await message.answer("⭐ **Ваше избранное пусто!**\n\nДобавляйте кино кнопкой под карточкой фильма.", parse_mode="Markdown")
-        else:
-            out = "⭐ **Ваша личная коллекция:**\n\n"
-            for i, fv in enumerate(user_favs, 1):
-                out += f"{i}. 🎬 **{fv.get('title')}** ({fv.get('year')})\n"
-            await message.answer(out, parse_mode="Markdown")
-    elif txt == "📁 Подборки":
-        await message.answer("📁 **Тренды дня и популярные категории:**", parse_mode="Markdown")
-    elif txt == "⚙️ Настройки":
-        await message.answer("⚙️ **Настройки бота**\n🆔 Ваш ID: `" + str(uid) + "`", parse_mode="Markdown")
-    elif txt == "🎁 Поделиться":
-        me = await bot.get_me()
-        ref = "https://t.me/" + str(me.username) + "?start=ref_" + str(uid)
-        refs_count = get_referral_count(uid)
-        txt_share = "🎁 **Приглашай друзей в KINOrave!**\n\n👥 Приглашено: **" + str(refs_count) + "**\n\n🔗 Ссылка:\n`" + ref + "`"
-        await message.answer(txt_share, reply_markup=get_share_kb(me.username, uid), parse_mode="Markdown")
-
-@dp.callback_query(lambda c: c.data == "check_sub")
-async def sub_callback(callback: types.CallbackQuery):
-    if await check_subscription(callback.from_user.id):
-        await callback.message.delete()
-        await callback.message.answer("🎉 Подписка подтверждена!", reply_markup=get_main_kb())
-        await callback.message.answer("🎬 Добро пожаловать в KINOrave!", reply_markup=get_start_kb(), parse_mode="Markdown")
+        text = "⭐ <b>Ваше избранное</b>\n\nПока пусто. Добавляйте фильмы во время поиска!"
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]])
     else:
-        await callback.answer("❌ Подпишись на канал для доступа!", show_alert=True)
+        text = "⭐ <b>Ваши сохраненные фильмы:</b>"
+        buttons = []
+        for m_id, m_title in user_favs.items():
+            buttons.append([
+                InlineKeyboardButton(text=f"🎬 {m_title}", callback_data=f"watch_{m_id}"),
+                InlineKeyboardButton(text="❌ Удалить", callback_data=f"fav_del_{m_id}")
+            ])
+        buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")])
+        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+        
+    if isinstance(event, types.CallbackQuery):
+        await event.message.edit_text(text, parse_html="HTML", reply_markup=kb)
+    else:
+        await event.answer(text, parse_html="HTML", reply_markup=kb)
 
-@dp.callback_query(lambda c: c.data == "show_favorites")
-async def show_favs_cb(callback: types.CallbackQuery):
-    uid = callback.from_user.id
-    user_favs = get_user_favorites(uid)
-    if not user_favs:
-        await callback.answer("⭐ Ваше избранное пусто!", show_alert=True)
-        return
-    out = "⭐ **Ваша личная коллекция:**\n\n"
-    for i, fv in enumerate(user_favs, 1):
-        out += f"{i}. 🎬 **{fv.get('title')}** ({fv.get('year')})\n"
-    await callback.message.answer(out, parse_mode="Markdown")
-    await callback.answer()
-@dp.message()
-async def text_search(message: types.Message):
-    uid = message.from_user.id
-    now = time.time()
-    
-    if uid != ADMIN_ID:
-        if uid in FLOOD_CONTROL and (now - FLOOD_CONTROL[uid]) < FLOOD_LIMIT_SECONDS:
-            last_alert = ATTACK_ALERT_COOLDOWN.get(uid, 0)
-            if now - last_alert > 30:
-                ATTACK_ALERT_COOLDOWN[uid] = now
-                try:
-                    await bot.send_message(
-                        chat_id=ADMIN_ID,
-                        text=(
-                            f"🚨 **ВНИМАНИЕ: Обнаружена попытка кибератаки / спама!**\n\n"
-                            f"👤 **Пользователь ID:** `{uid}`\n"
-                            f"⚡️ **Имя:** {message.from_user.full_name} (@{message.from_user.username})\n"
-                            f"⏱ **Частота:** Превышен порог запросов\n"
-                            f"💬 **Текст запроса:** `{message.text[:50]}`\n\n"
-                            f"👇 *Выберите действие для защиты бота:*"
-                        ),
-                        reply_markup=get_attack_alert_kb(),
-                        parse_mode="Markdown"
-                    )
-                except Exception:
-                    pass
-            return  
+@dp.callback_query(F.data.startswith("fav_del_"))
+async def cb_del_favorite(callback: types.CallbackQuery):
+    movie_id = callback.data.split("_")[2]
+    remove_from_favorites(callback.from_user.id, movie_id)
+    await callback.answer("🗑 Фильм удален из Избранного", show_alert=False)
+    await cb_favorites_list(callback)
 
-    FLOOD_CONTROL[uid] = now
-
-    if is_maintenance() and uid != ADMIN_ID:
-        await message.answer("🛠 В боте проводятся плановые технические работы. Скоро вернемся!")
-        return
-
-    save_user(uid)
-    if not await check_subscription(uid):
-        await message.answer("Для поиска подпишитесь на канал KINOrave!", reply_markup=get_sub_kb())
-        return
-
-    q = message.text.strip()
-    if not q or q.startswith("/"):
-        return
-
-    found_film = None
-    url = "https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword"
-    params = {"keyword": q, "page": 1}
-    
-    try:
-        async with aiohttp.ClientSession(headers=HEADERS) as session:
-            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=4)) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    films = data.get('films', [])
-                    if films:
-                        item = films[0]
-                        title = item.get('nameRu') or item.get('nameEn') or q
-                        year = str(item.get('year', '2023'))
-                        rat = str(item.get('rating', '7.9'))
-                        kp_id = item.get('filmId', 0)
-                        
-                        # Автоматический расчет постера через Кинофорум / Kinorium
-                        poster_url = f"https://kinorium-images.imgix.net/movie/poster/{kp_id}/h800/v_63749718.jpg" if kp_id else "https://kinorium-images.imgix.net/movie/poster/1179782/h800/v_63749718.jpg"
-                        if item.get('posterUrl'):
-                            poster_url = item.get('posterUrl')
-
-                        # Авто-определение типа (сериал или фильм) по ключевым словам или данным API
-                        genres_str = str(item.get('genres', [])).lower()
-                        is_serial = "сериал" in genres_str or "аниме" in genres_str or "многосерийный" in genres_str or "serial" in q.lower()
-
-                        found_film = {
-                            "title": title,
-                            "year": year,
-                            "rating": rat,
-                            "imdb": "8.2",
-                            "tmdb": "82%",
-                            "desc": f"{'сериал' if is_serial else 'фильм'} | кр:{rat} | imdb:8.2 | {year} | США | драма",
-                            "poster": poster_url,
-                            "id": kp_id,
-                            "is_serial": is_serial
-                        }
-    except Exception:
-        pass
-
-    if not found_film:
-        await message.answer("😔 Ничего не найдено в глобальной базе Кинофорума. Проверьте правильность написания!")
-        return
-
-    caption = (
-        f"🎬 **{found_film['title']}** ({found_film['year']})\n"
-        f"⭐ Кинопоиск: {found_film['rating']} | IMDb: {found_film.get('imdb', '8.2')} | TMDB: {found_film.get('tmdb', '82%')}\n\n"
-        f"{found_film['desc']}"
+# ================= MOVIE PLAYER & INTERACTIVE INTERFACE =================
+@dp.callback_query(F.data.startswith("watch_"))
+async def movie_player_interface(callback: types.CallbackQuery):
+    movie_id = callback.data.split("_")[1]
+    text = (
+        "🎬 <b>Плеер фильма / сериала</b>\n\n"
+        "1 сезон 1 серия\n\n"
+        "▶️ Жми кнопку ниже для просмотра."
     )
-    kb = get_movie_kb(found_film['title'], found_film['id'], found_film['is_serial'])
-    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="▶️ Смотреть видео", callback_data=f"play_{movie_id}")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"watch_{movie_id}"), InlineKeyboardButton(text="🎞 Серии", callback_data=f"seasons_{movie_id}"), InlineKeyboardButton(text="Вперед ▶️", callback_data=f"watch_{movie_id}")],
+        [InlineKeyboardButton(text="⚙️ Озвучка", callback_data=f"audio_{movie_id}"), InlineKeyboardButton(text="🎛 Качество", callback_data=f"qual_{movie_id}")],
+        [InlineKeyboardButton(text="🔔 Уведомлять", callback_data="notify"), InlineKeyboardButton(text="⭐ В избранное", callback_data=f"fav_add_{movie_id}_Фильм")],
+        [InlineKeyboardButton(text="🔍 Поиск", callback_data="start_search")]
+    ])
     try:
-        await message.answer_photo(photo=found_film['poster'], caption=caption, reply_markup=kb, parse_mode="Markdown")
-    except Exception:
-        await message.answer(caption, reply_markup=kb, parse_mode="Markdown")
+        await callback.message.edit_caption(caption=text, parse_html="HTML", reply_markup=kb)
+    except:
+        await callback.message.edit_text(text=text, parse_html="HTML", reply_markup=kb)
 
-@dp.inline_query()
-async def inline_search(query: InlineQuery):
-    q = query.query.strip().lower()
-    res = []
-    if q:
-        url = "https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword"
-        params = {"keyword": q, "page": 1}
-        try:
-            async with aiohttp.ClientSession(headers=HEADERS) as session:
-                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=3)) as r:
-                    if r.status == 200:
-                        data = await r.json()
-                        for idx, item in enumerate(data.get('films', [])[:5]):
-                            title = item.get('nameRu') or item.get('nameEn') or q
-                            year = str(item.get('year', '2023'))
-                            rat = str(item.get('rating', '7.9'))
-                            kp_id = item.get('filmId', 0)
-                            poster = item.get('posterUrl') or f"https://kinorium-images.imgix.net/movie/poster/{kp_id}/h800/v_63749718.jpg"
-                            desc = f"фильм | кр:{rat} | {year}"
-                            caption = f"🎬 **{title}** ({year})\n⭐ Кинопоиск: {rat}\n\n{desc}"
-                            kb = get_movie_kb(title, kp_id, False)
-                            res.append(InlineQueryResultArticle(
-                                id=str(idx),
-                                title=title,
-                                description=desc,
-                                input_message_content=InputTextMessageContent(message_text=caption, parse_mode="Markdown"),
-                                reply_markup=kb
-                            ))
-        except Exception:
-            pass
-    await query.answer(res, cache_time=1)
+@dp.callback_query(F.data.startswith("play_"))
+async def play_video_action(callback: types.CallbackQuery):
+    await callback.answer("🎬 Запуск видео...", show_alert=False)
 
-@dp.callback_query(lambda c: c.data.startswith("fav_add_"))
-async def add_fav_callback(callback: types.CallbackQuery):
-    uid = callback.from_user.id
-    kp_id = callback.data.replace("fav_add_", "")
-    
-    # Пытаемся достать информацию из текста сообщения
-    msg = callback.message
-    title = "Кинофильм"
-    year = "2023"
-    rating = "7.9"
-    
-    if msg and msg.caption:
-        lines = msg.caption.split("\n")
-        if lines:
-            title = lines[0].replace("🎬", "").strip()
-            
-    movie_info = {"id": kp_id, "title": title, "year": year, "rating": rating}
-    added = add_to_favorites(uid, movie_info)
-    
-    if added:
-        await callback.answer("⭐ Успешно добавлено в ваше избранное!", show_alert=True)
+@dp.callback_query(F.data.startswith("seasons_"))
+async def select_seasons(callback: types.CallbackQuery):
+    movie_id = callback.data.split("_")[1]
+    text = "🎬 <b>Выбор сезона:</b>"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="1 Сезон", callback_data=f"episodes_{movie_id}_1")],
+        [InlineKeyboardButton(text="2 Сезон", callback_data=f"episodes_{movie_id}_2")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"watch_{movie_id}")]
+    ])
+    await callback.message.edit_caption(caption=text, parse_html="HTML", reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("qual_"))
+async def select_quality(callback: types.CallbackQuery):
+    movie_id = callback.data.split("_")[1]
+    text = "🎛 <b>Выберите качество видео:</b>"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="720p HD", callback_data=f"set_q_{movie_id}_720")],
+        [InlineKeyboardButton(text="1080p Full HD", callback_data=f"set_q_{movie_id}_1080")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"watch_{movie_id}")]
+    ])
+    await callback.message.edit_caption(caption=text, parse_html="HTML", reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("audio_"))
+async def select_audio(callback: types.CallbackQuery):
+    movie_id = callback.data.split("_")[1]
+    text = "⚙️ <b>Выберите вариант озвучки:</b>"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Дубляж", callback_data=f"set_a_{movie_id}_dub")],
+        [InlineKeyboardButton(text="Многоголосый", callback_data=f"set_a_{movie_id}_mvo")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"watch_{movie_id}")]
+    ])
+    await callback.message.edit_caption(caption=text, parse_html="HTML", reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("set_q_") | F.data.startswith("set_a_"))
+async def apply_player_setting(callback: types.CallbackQuery):
+    await callback.answer("Параметр успешно применен!", show_alert=False)
+    parts = callback.data.split("_")
+    movie_id = parts[2]
+    await movie_player_interface(callback)
+
+# ================= COLLECTIONS & FILTER =================
+@dp.message(Command("collections"))
+@dp.callback_query(F.data == "collections")
+async def cmd_collections(event: types.Message | types.CallbackQuery):
+    text = "📦 <b>Подборки фильмов и сериалов</b>\n🍿 <b>Приятного просмотра!</b>"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="▶️ Смотрят сегодня", callback_data="coll_today")],
+        [InlineKeyboardButton(text="🔥 Популярное", callback_data="coll_pop")],
+        [InlineKeyboardButton(text="🎬 Новинки фильмов", callback_data="coll_new_movies")],
+        [InlineKeyboardButton(text="🔍 Поиск подборок", callback_data="start_search")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]
+    ])
+    if isinstance(event, types.CallbackQuery):
+        await event.message.edit_text(text, parse_html="HTML", reply_markup=kb)
     else:
-        await callback.answer("ℹ️ Этот фильм уже есть в вашем избранном.", show_alert=True)
+        await event.answer(text, parse_html="HTML", reply_markup=kb)
 
-@dp.callback_query(lambda c: c.data.startswith("seasons_"))
-async def seasons_callback(callback: types.CallbackQuery):
-    kp_id = callback.data.replace("seasons_", "")
+@dp.callback_query(F.data.startswith("coll_"))
+async def show_collection_items(callback: types.CallbackQuery):
+    movies = await get_collection(callback.data)
+    if not movies:
+        await callback.answer("Ничего не найдено в этой подборке.", show_alert=True)
+        return
     
-    # Автоматический просчет сезонов и серий для сериала
-    seasons_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📺 Сезон 1 (Все серии)", callback_data=f"get_s_{kp_id}_1")],
-        [InlineKeyboardButton(text="📺 Сезон 2 (Все серии)", callback_data=f"get_s_{kp_id}_2")],
-        [InlineKeyboardButton(text="📺 Сезон 3 (Все серии)", callback_data=f"get_s_{kp_id}_3")],
-        [InlineKeyboardButton(text="◀️ Назад к фильму", callback_data="back_start")]
+    movie = random.choice(movies)
+    movie_id = movie.get("id")
+    title = html.escape(movie.get("name") or movie.get("alternativeName", "Фильм"))
+    rating = movie.get("rating", {}).get("kp", "—")
+    poster = movie.get("poster", {}).get("url")
+    
+    text = f"🎬 <b>{title}</b>\n⭐ Рейтинг: {rating}"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="▶️ Смотреть", callback_data=f"watch_{movie_id}")],
+        [InlineKeyboardButton(text="⭐ В избранное", callback_data=f"fav_add_{movie_id}_{title[:15]}")],
+        [InlineKeyboardButton(text="⬅️ Назад к подборкам", callback_data="collections")]
     ])
     
-    await callback.message.edit_caption(
-        caption="🔢 **Выберите сезон сериала:**\n\n*Система автоматически подготовила доступные сезоны из базы Кинофорума:*",
-        reply_markup=seasons_kb,
-        parse_mode="Markdown"
-    )
+    if poster:
+        await callback.message.answer_photo(photo=poster, caption=text, parse_html="HTML", reply_markup=kb)
+    else:
+        await callback.message.answer(text=text, parse_html="HTML", reply_markup=kb)
     await callback.answer()
 
-@dp.callback_query(lambda c: c.data.startswith("getfile_"))
-async def handle_get_file(callback: types.CallbackQuery):
-    await callback.answer("⏳ Подготавливаем медиафайл...", show_alert=False)
-    demo_video_url = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
-    video_caption = (
-        "📹 **Медиафайл готов!**\n\n"
-        "⏱ **Длительность:** 2:23:17 (143 мин.)\n\n"
-        "📊 **Рейтинги:**\n"
-        "• 🟡 Кинопоиск: 8.1 / 10\n"
-        "• ⭐️ IMDb: 8.2 / 10\n\n"
-        "💬 *Смотрите прямо в Telegram!*"
+@dp.message(Command("filter"))
+@dp.callback_query(F.data == "filter")
+async def cmd_filter(event: types.Message | types.CallbackQuery):
+    text = (
+        "🌪 <b>Фильтр поиска</b>\n\n"
+        "<b>Выбрано:</b>\n"
+        "📊 Рейтинг: 5.0 - 10.0\n"
+        "📅 Год: все\n"
+        "🎬 Тип: все"
     )
-    try:
-        await callback.message.answer_video(video=demo_video_url, caption=video_caption, parse_mode="Markdown")
-    except Exception as e:
-        logging.error("Ошибка отправки видео: " + str(e))
-        await callback.message.answer("⚠️ Не удалось отправить файл.")
-
-@dp.callback_query()
-async def callbacks(callback: types.CallbackQuery):
-    d = callback.data
-    if d == "back_start":
-        await callback.message.edit_caption(
-            caption="🎬 **KINOrave**\n\n🍿 Выбирай разделы или пиши название фильма в чат.",
-            reply_markup=get_start_kb(),
-            parse_mode="Markdown"
-        )
-    elif d in ["episodes", "next_item", "voice", "quality", "notify", "tv", "more", "history"]:
-        await callback.answer("⚙️ Функция активна!", show_alert=True)
-    else:
-        await callback.answer("Готово!", show_alert=True)
-
-async def on_startup(bot: Bot):
-    await bot.set_my_commands([
-        BotCommand(command="start", description="Запустить"),
-        BotCommand(command="search", description="Поиск"),
-        BotCommand(command="favorites", description="Избранное"),
-        BotCommand(command="admin", description="Админ-панель"),
-        BotCommand(command="broadcast", description="Рассылка")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Искать по фильтру", callback_data="f_search")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]
     ])
-    try: await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
-    except Exception: pass
+    if isinstance(event, types.CallbackQuery):
+        await event.message.edit_text(text, parse_html="HTML", reply_markup=kb)
+    else:
+        await event.answer(text, parse_html="HTML", reply_markup=kb)
 
-def main():
-    app = web.Application()
-    webhook_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
-    webhook_handler.register(app, path=WEBHOOK_PATH)
-    dp.startup.register(on_startup)
-    setup_application(app, dp, bot=bot)
-    web.run_app(app, host="0.0.0.0", port=PORT)
+@dp.callback_query(F.data == "f_search")
+async def filter_search_action(callback: types.CallbackQuery):
+    await callback.answer("Поиск по фильтру выполнен!", show_alert=False)
+
+# ================= SETTINGS & UTILS =================
+@dp.message(Command("settings"))
+@dp.callback_query(F.data == "settings")
+async def cmd_settings(event: types.Message | types.CallbackQuery):
+    user_id = event.from_user.id
+    users = load_users()
+    reg_date = users.get(user_id, "29.08.2026")
+    
+    text = (
+        f"⚙️ <b>Настройки бота</b>\n\n"
+        f"🆔 <code>{user_id}</code>\n"
+        f"📅 Дата регистрации: {reg_date}"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⤴️ Поделиться", callback_data="share")],
+        [InlineKeyboardButton(text="🎧 Поддержка", callback_data="help")],
+        [InlineKeyboardButton(text="🛡 Подключить VPN", url=VPN_LINK)],
+        [InlineKeyboardButton(text="🔍 Поиск", callback_data="start_search")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]
+    ])
+    if isinstance(event, types.CallbackQuery):
+        await event.message.edit_text(text, parse_html="HTML", reply_markup=kb)
+    else:
+        await event.answer(text, parse_html="HTML", reply_markup=kb)
+
+@dp.callback_query(F.data == "help")
+async def cb_help(callback: types.CallbackQuery):
+    text = (
+        "💡 <b>Инструкция по использованию:</b>\n\n"
+        "Отправь название фильма или сериала в чат для быстрого поиска.\n\n"
+        f"Поддержка: {REQUIRED_CHANNEL}"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="settings")]])
+    await callback.message.edit_text(text, parse_html="HTML", reply_markup=kb)
+
+@dp.callback_query(F.data == "share")
+async def cb_share(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    ref_link = f"https://t.me/kinorave_tg?start=ref_{user_id}"
+    text = (
+        "⤴️ <b>Поделиться ссылкой</b>\n\n"
+        "📌 <b>Приглашай друзей в нашего бота!</b>\n\n"
+        "🔗 <b>Твоя персональная ссылка:</b>\n"
+        f"<code>{ref_link}</code>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⤴️ Поделиться", url=f"https://t.me/share/url?url={ref_link}&text=Смотри%20фильмы%20в%20Кинорейв!")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings")]
+    ])
+    await callback.message.edit_text(text, parse_html="HTML", reply_markup=kb)
+
+@dp.callback_query(F.data == "back_to_main")
+async def cb_back_to_main(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await show_welcome(callback, edit=True)
+
+# ================= BOT COMMANDS MENU & STARTUP =================
+async def set_commands(bot: Bot):
+    commands = [
+        BotCommand(command="start", description="🔄 Перезапустить"),
+        BotCommand(command="search", description="🔍 Поиск"),
+        BotCommand(command="collections", description="📦 Подборки"),
+        BotCommand(command="filter", description="🌪 Фильтр"),
+        BotCommand(command="settings", description="⚙️ Настройки"),
+        BotCommand(command="share", description="⤴️ Поделиться"),
+        BotCommand(command="help", description="💡 Помощь"),
+        BotCommand(command="admin", description="🛠 Админ-панель")
+    ]
+    await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
+
+async def main():
+    await set_commands(bot)
+    logging.info("Bot KINOrave successfully started!")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
