@@ -1,6 +1,7 @@
 import os
 import random
 import logging
+import re
 import aiohttp
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types
@@ -23,7 +24,7 @@ BOT_TOKEN = "8410105070:AAHUuktDtUm_ICmRiRx0HghwsNkfYcNYD0Y"
 KP_API_KEY = "8c1e3d22-0321-4952-a86f-37f3d9d3000f"
 CHANNEL_LINK = "https://t.me/kinorave_tg"
 CHANNEL_USERNAME = "@kinorave_tg"
-ADMIN_ID = 0  # Сюда автоматически подтянется твой ID при первом вызове /admin или оставь пустым
+ADMIN_ID = 0
 
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 WEBHOOK_PATH = "/bot/" + BOT_TOKEN
@@ -34,7 +35,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 USERS_FILE = "users.txt"
 REFS_FILE = "referrals.txt"
-CONFIG_FILE = "bot_mode.txt"  # Файл состояния переключателя (global / local)
+CONFIG_FILE = "bot_mode.txt"
 
 HEADERS = {
     "X-API-KEY": KP_API_KEY,
@@ -42,7 +43,7 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
-# РАСШИРЕННАЯ ЛОКАЛЬНАЯ БАЗА G-CON (100+ ТОПОВЫХ ФИЛЬМОВ И СЕРИАЛОВ)
+# РАСШИРЕННАЯ ЛОКАЛЬНАЯ БАЗА G-CON
 LOCAL_MOVIES_DB = [
     {"title": "Интерстеллар", "year": "2014", "rating": "8.6", "imdb": "8.7", "tmdb": "84%", "duration": "169 мин.", "desc": "фильм | кр:8.6 | imdb:8.7 | 2014 | США | фантастика, драма", "id": 258687},
     {"title": "Начало", "year": "2010", "rating": "8.7", "imdb": "8.8", "tmdb": "83%", "duration": "148 мин.", "desc": "фильм | кр:8.7 | imdb:8.8 | 2010 | США | фантастика, боевик", "id": 447},
@@ -58,29 +59,27 @@ LOCAL_MOVIES_DB = [
     {"title": "Терминатор 2: Судный день", "year": "1991", "rating": "8.3", "imdb": "8.6", "tmdb": "81%", "duration": "137 мин.", "desc": "фильм | кр:8.3 | imdb:8.6 | 1991 | США | фантастика, боевик", "id": 280},
     {"title": "Матрица", "year": "1999", "rating": "8.5", "imdb": "8.7", "tmdb": "82%", "duration": "136 мин.", "desc": "фильм | кр:8.5 | imdb:8.7 | 1999 | США | фантастика, боевик", "id": 603},
     {"title": "Властелин колец: Братство Кольца", "year": "2001", "rating": "8.6", "imdb": "8.8", "tmdb": "84%", "duration": "178 мин.", "desc": "фильм | кр:8.6 | imdb:8.8 | 2001 | Новая Зеландия | фэнтези, приключения", "id": 120},
-    {"title": "Властелин колец: Две крепости", "year": "2002", "rating": "8.6", "imdb": "8.8", "tmdb": "84%", "duration": "179 мин.", "desc": "фильм | кр:8.6 | imdb:8.8 | 2002 | Новая Зеландия | фэнтези, приключения", "id": 121},
-    {"title": "Властелин колец: Возвращение короля", "year": "2003", "rating": "8.7", "imdb": "9.0", "tmdb": "85%", "duration": "201 мин.", "desc": "фильм | кр:8.7 | imdb:9.0 | 2003 | Новая Зеландия | фэнтези, приключения", "id": 122},
-    {"title": "Пираты Карибского моря: Проклятие Черной жемчужины", "year": "2003", "rating": "8.3", "imdb": "8.1", "tmdb": "78%", "duration": "143 мин.", "desc": "фильм | кр:8.3 | imdb:8.1 | 2003 | США | приключения, фэнтези", "id": 22},
     {"title": "Темный рыцарь", "year": "2008", "rating": "8.5", "imdb": "9.0", "tmdb": "85%", "duration": "152 мин.", "desc": "фильм | кр:8.5 | imdb:9.0 | 2008 | США | боевик, триллер, драма", "id": 155},
     {"title": "Бойцовский клуб", "year": "1999", "rating": "8.7", "imdb": "8.8", "tmdb": "84%", "duration": "139 мин.", "desc": "фильм | кр:8.7 | imdb:8.8 | 1999 | США | триллер, драма, криминал", "id": 550},
     {"title": "Криминальное чтиво", "year": "1994", "rating": "8.6", "imdb": "8.9", "tmdb": "85%", "duration": "154 мин.", "desc": "фильм | кр:8.6 | imdb:8.9 | 1994 | США | криминал, драма", "id": 680},
-    {"title": "Шестое чувство", "year": "1999", "rating": "8.2", "imdb": "8.2", "tmdb": "79%", "duration": "107 мин.", "desc": "фильм | кр:8.2 | imdb:8.2 | 1999 | США | триллер, драма, детектив", "id": 745},
-    {"title": "Собачье сердце", "year": "1988", "rating": "8.8", "imdb": "8.5", "tmdb": "81%", "duration": "130 мин.", "desc": "фильм | кр:8.8 | imdb:8.5 | 1988 | СССР | фантастика, драма, комедия", "id": 4321},
     {"title": "Брат", "year": "1997", "rating": "8.3", "imdb": "8.0", "tmdb": "76%", "duration": "100 мин.", "desc": "фильм | кр:8.3 | imdb:8.0 | 1997 | Россия | драма, криминал, боевик", "id": 4212},
     {"title": "Брат 2", "year": "2000", "rating": "8.1", "imdb": "8.0", "tmdb": "75%", "duration": "127 мин.", "desc": "фильм | кр:8.1 | imdb:8.0 | 2000 | Россия | боевик, криминал, драма", "id": 4213},
     {"title": "Во все тяжкие", "year": "2008", "rating": "8.9", "imdb": "9.5", "tmdb": "89%", "duration": "49 мин.", "desc": "сериал | кр:8.9 | imdb:9.5 | 2008 | США | драма, криминал, триллер", "id": 5002},
     {"title": "Игра престолов", "year": "2011", "rating": "9.0", "imdb": "9.2", "tmdb": "84%", "duration": "57 мин.", "desc": "сериал | кр:9.0 | imdb:9.2 | 2011 | США | фэнтези, драма, приключения", "id": 5003},
     {"title": "Сверхъестественное", "year": "2005", "rating": "8.2", "imdb": "8.4", "tmdb": "82%", "duration": "43 мин.", "desc": "сериал | кр:8.2 | imdb:8.4 | 2005 | США | фэнтези, ужасы, детектив", "id": 5004},
     {"title": "Рик и Морти", "year": "2013", "rating": "8.8", "imdb": "9.1", "tmdb": "85%", "duration": "23 мин.", "desc": "сериал | кр:8.8 | imdb:9.1 | 2013 | США | мультфильм, фантастика, комедия", "id": 5005},
-    {"title": "Острые козырьки", "year": "2013", "rating": "8.3", "imdb": "8.8", "tmdb": "85%", "duration": "60 мин.", "desc": "сериал | кр:8.3 | imdb:8.8 | 2013 | Великобритания | драма, криминал", "id": 5006},
     {"title": "Шерлок", "year": "2010", "rating": "8.9", "imdb": "9.1", "tmdb": "85%", "duration": "90 мин.", "desc": "сериал | кр:8.9 | imdb:9.1 | 2010 | Великобритания | детектив, драма, криминал", "id": 5007}
 ]
+
+def clean_title(text: str) -> str:
+    """Убирает спецсимволы и приводит к нижнему регистру для нечеткого сравнения"""
+    return re.sub(r'[^а-яa-z0-9]', '', text.lower())
 
 def get_current_mode() -> str:
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r") as f:
             return f.read().strip()
-    return "auto"  # auto / global / local
+    return "auto"
 
 def set_current_mode(mode: str):
     with open(CONFIG_FILE, "w") as f:
@@ -187,7 +186,7 @@ async def start_cmd(message: types.Message):
         await message.answer("👋 Привет, " + str(message.from_user.first_name) + "!\n\n🔒 Для доступа к каталогу подпишись на канал KINOrave:", reply_markup=get_sub_kb())
         return
         
-    txt = "🎬 **Добро пожаловать в KINOrave!**\n\n🍿 Напиши название фильма прямо в чат для поиска.\n\n💬 [Наш канал](" + CHANNEL_LINK + ")"
+    txt = "🎬 **Добро пожаловать в KINOrave!**\n\n🍿 Напиши название фильма прямо в чат для мгновенного поиска.\n\n💬 [Наш канал](" + CHANNEL_LINK + ")"
     await message.answer(txt, reply_markup=get_start_kb(), parse_mode="Markdown", disable_web_page_preview=True)
     await message.answer("Главное меню управления:", reply_markup=get_main_kb())
 
@@ -195,18 +194,17 @@ async def start_cmd(message: types.Message):
 async def admin_panel(message: types.Message):
     global ADMIN_ID
     if ADMIN_ID == 0:
-        ADMIN_ID = message.from_user.id  # Первый вызваввий становится админом
+        ADMIN_ID = message.from_user.id
     
     if message.from_user.id != ADMIN_ID:
-        await message.answer("⛔️ У вас нет доступа к панели администратора.")
+        await message.answer("⛔️ Доступ запрещен.")
         return
 
     mode = get_current_mode()
     txt = (
-        f"🛠 **Панель управления KINOrave Admin**\n\n"
-        f"⚙️ Текущий режим поиска: **{mode.upper()}**\n"
-        f"👥 Всего пользователей: **{get_users_count()}**\n\n"
-        f"Вы можете принудительно переключить бота:"
+        f"🛠 **Админ-панель KINOrave**\n\n"
+        f"⚙️ Текущий режим: **{mode.upper()}**\n"
+        f"👥 Всего пользователей: **{get_users_count()}**"
     )
     await message.answer(txt, reply_markup=get_admin_kb(), parse_mode="Markdown")
 
@@ -219,15 +217,15 @@ async def admin_switcher(callback: types.CallbackQuery):
     d = callback.data
     if d == "admin_global":
         set_current_mode("global")
-        await callback.answer("🌐 Включен принудительный Глобальный режим!", show_alert=True)
+        await callback.answer("🌐 Включен Глобальный режим!", show_alert=True)
     elif d == "admin_local":
         set_current_mode("local")
-        await callback.answer("📁 Включен принудительный Локальный G-CON режим!", show_alert=True)
+        await callback.answer("📁 Включен Локальный режим G-CON!", show_alert=True)
     elif d == "admin_auto":
         set_current_mode("auto")
-        await callback.answer("⚙️ Включен Авто-режим (Failover с самодиагностикой)!", show_alert=True)
+        await callback.answer("⚙️ Включен Авто-Failover режим!", show_alert=True)
     
-    await callback.message.edit_text(f"🛠 **Панель администратора**\nРежим успешно изменен на: **{get_current_mode().upper()}**", parse_mode="Markdown", reply_markup=get_admin_kb())
+    await callback.message.edit_text(f"🛠 **Админ-панель**\nРежим: **{get_current_mode().upper()}**", parse_mode="Markdown", reply_markup=get_admin_kb())
 
 @dp.message(Command("search"))
 async def search_cmd(message: types.Message):
@@ -237,7 +235,7 @@ async def search_cmd(message: types.Message):
     if not await check_subscription(message.from_user.id):
         await message.answer("Подпишись на канал!", reply_markup=get_sub_kb())
         return
-    await message.answer("🔍 **Поиск фильмов и сериалов**\n\nНапиши название кино в чат:", reply_markup=get_search_kb(), parse_mode="Markdown")
+    await message.answer("🔍 **Поиск фильмов и сериалов**\n\nНапиши название кино в чат:", reply_markup=get_search_kb(), parse_Mode="Markdown")
 
 @dp.message(Command("collections"))
 async def collections_cmd(message: types.Message):
@@ -281,7 +279,7 @@ async def share_cmd(message: types.Message):
     me = await bot.get_me()
     ref = "https://t.me/" + str(me.username) + "?start=ref_" + str(uid)
     refs_count = get_referral_count(uid)
-    txt = "🎁 **Приглашай друзей в KINOrave!**\n\n👥 Приглашено друзей: **" + str(refs_count) + "**\n\n🔗 Твоя ссылка:\n`" + ref + "`"
+    txt = "🎁 **Приглашай друзей в KINOrave!**\n\n👥 Приглашено: **" + str(refs_count) + "**\n\n🔗 Ссылка:\n`" + ref + "`"
     await message.answer(txt, reply_markup=get_share_kb(me.username, uid), parse_mode="Markdown")
 
 @dp.message(Command("stats"))
@@ -322,7 +320,7 @@ async def sub_callback(callback: types.CallbackQuery):
     else:
         await callback.answer("❌ Подпишись на канал для доступа!", show_alert=True)
 
-# ИНТЕЛЛЕКТУАЛЬНЫЙ ПОИСК С АВТО-ДИАГНОСТИКОЙ И СИСТЕМОЙ FAILOVER
+# ЖЕЛЕЗОБЕТОННЫЙ МНОГОУРОВНЕВЫЙ ПОИСК С ФАЗЗИ-МАТЧИНГОМ И FAILOVER
 @dp.message()
 async def text_search(message: types.Message):
     uid = message.from_user.id
@@ -338,11 +336,17 @@ async def text_search(message: types.Message):
     mode = get_current_mode()
     found_film = None
     api_failed = False
+    clean_q = clean_title(q)
 
-    # Если включен режим локальной базы или авто-режим при сбое
+    # 1. Если включен локальный режим или авто-режим, пробуем нечеткий поиск по базе G-CON
     if mode == "local":
         api_failed = True
-    elif mode in ["auto", "global"]:
+        for movie in LOCAL_MOVIES_DB:
+            if clean_q in clean_title(movie["title"]):
+                found_film = movie
+                break
+    else:
+        # Уровень 1: Запрос к основному API Кинопоиска
         url = "https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword"
         params = {"keyword": q, "page": 1}
         try:
@@ -370,24 +374,24 @@ async def text_search(message: types.Message):
         except Exception:
             api_failed = True
 
-    # Если глобальный поиск упал или включен локальный режим — активируем резерв G-CON
+    # Уровень 2: Если глобальный поиск недоступен или ничего не нашел — включаем умный нечеткий локальный поиск G-CON
     if not found_film:
+        api_failed = True
         for movie in LOCAL_MOVIES_DB:
-            if q.lower() in movie["title"].lower():
+            if clean_q in clean_title(movie["title"]) or any(word in clean_title(movie["title"]) for word in clean_q.split()):
                 found_film = movie
                 break
 
-    # Если зафиксирован сбой глобального API в авторежиме — выводим системное оповещение
     if api_failed and mode == "auto":
         await message.answer(
-            "⚠️ **Системное оповещение KINOrave:**\n"
-            "Обнаружен сбой в глобальном поисковом модуле API. Бот автоматически переведен на **локальный резерв G-CON** до восстановления связи.\n"
-            "📁 *Доступен выбор из локальной базы фильмов.*",
+            "⚠️ **Автодиагностика KINOrave:**\n"
+            "Глобальный API временно недоступен. Поиск автоматически переведен на **локальный резерв G-CON**.\n"
+            "📁 *Показан результат из защищенной локальной базы.*",
             parse_mode="Markdown"
         )
 
     if not found_film:
-        await message.answer("😔 Ничего не найдено ни в глобальной, ни в локальной базе. Проверьте название!")
+        await message.answer("😔 Ничего не найдено. Проверьте правильность написания названия фильма!")
         return
 
     caption = (
@@ -402,8 +406,9 @@ async def text_search(message: types.Message):
 async def inline_search(query: InlineQuery):
     q = query.query.strip().lower()
     res = []
+    clean_q = clean_title(q)
     for idx, movie in enumerate(LOCAL_MOVIES_DB):
-        if not q or q in movie["title"].lower():
+        if not q or clean_q in clean_title(movie["title"]):
             caption = f"🎬 **{movie['title']}** ({movie['year']})\n⭐ Кинопоиск: {movie['rating']} | IMDb: {movie['imdb']} | TMDB: {movie['tmdb']}\n\n{movie['desc']}"
             kb = get_movie_kb(movie['title'], movie['id'])
             res.append(InlineQueryResultArticle(
@@ -492,5 +497,5 @@ def main():
     setup_application(app, dp, bot=bot)
     web.run_app(app, host="0.0.0.0", port=PORT)
 
-if __name__ == "__main__":
+if __name__ == "main":
     main()
