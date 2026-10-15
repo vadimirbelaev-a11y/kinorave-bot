@@ -24,8 +24,8 @@ CHANNEL_LINK = "https://t.me/kinorave_tg"
 CHANNEL_USERNAME = "@kinorave_tg"
 
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
-WEBHOOK_PATH = f"/bot/{BOT_TOKEN}"
-WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
+WEBHOOK_PATH = "/bot/" + BOT_TOKEN
+WEBHOOK_URL = RENDER_EXTERNAL_URL + WEBHOOK_PATH
 PORT = int(os.environ.get("PORT", 10000))
 
 bot = Bot(token=BOT_TOKEN)
@@ -39,7 +39,7 @@ def save_user(user_id):
             users = set(line.strip() for line in f if line.strip())
     if str(user_id) not in users:
         with open(USERS_FILE, "a") as f:
-            f.write(f"{user_id}\n")
+            f.write(str(user_id) + "\n")
 
 def get_users_count():
     if not os.path.exists(USERS_FILE):
@@ -86,27 +86,4 @@ def get_search_kb():
 def get_collections_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔥 Тренды дня", callback_data="col_trend"), InlineKeyboardButton(text="🌟 Популярное", callback_data="col_pop")],
-        [InlineKeyboardButton(text="🎬 Новинки фильмов", callback_data="col_movies"), InlineKeyboardButton(text="📺 Новинки сериалов", callback_data="col_shows")],
-        [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="back_start")]
-    ])
-
-def get_filter_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💥 Боевики", callback_data="genre_action"), InlineKeyboardButton(text="😂 Комедии", callback_data="genre_comedy")],
-        [InlineKeyboardButton(text="🎭 Драмы", callback_data="genre_drama"), InlineKeyboardButton(text="👻 Ужасы", callback_data="genre_horror")],
-        [InlineKeyboardButton(text="🚀 Фантастика", callback_data="genre_scifi"), InlineKeyboardButton(text="❤️ Мелодрамы", callback_data="genre_romance")],
-        [InlineKeyboardButton(text="🔄 Сбросить фильтр", callback_data="f_reset")],
-        [InlineKeyboardButton(text="🔍 Искать по каталогу", switch_inline_query_current_chat="")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_start")]
-    ])
-
-def get_settings_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⤴️ Пригласить друга", callback_data="open_share")],
-        [InlineKeyboardButton(text="👨‍💻 Наш канал", url=CHANNEL_LINK)],
-        [InlineKeyboardButton(text="🛡 Подключить VPN", url="https://t.me/StableVPN")],
-        [InlineKeyboardButton(text="🔍 Найти кино", switch_inline_query_current_chat="")]
-    ])
-
-def get_share_kb(username, uid):
-    ref = f"
+        [InlineKeyboardButton(text="🎬 Новинки фильмов", callback_data="col_movies"), Inline
