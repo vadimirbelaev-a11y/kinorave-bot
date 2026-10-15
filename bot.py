@@ -5,6 +5,7 @@ import random
 import re
 import html
 import aiohttp
+from aiohttp import web
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -31,6 +32,20 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 last_request_time = {}
+
+# ================= RENDER WEB SERVER PING (ЗАГЛУШКА ПОРТА) =================
+async def handle_ping(request):
+    return web.Response(text="KINOrave Bot is running successfully!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info(f"Web server stub started on port {port}")
 
 # ================= STATES =================
 class SearchStates(StatesGroup):
@@ -148,8 +163,7 @@ async def search_kinopoisk(query: str):
         except Exception as e:
             logging.error(f"API Error 1: {e}")
 
-    # Запасной поиск по общему списку через фильтр по названию
-    fallback_url = f"https://api.kinopoisk.dev/v1.4/movie?page=1&limit=5&page=1&name={cleaned_query}"
+    fallback_url = f"https://api.kinopoisk.dev/v1.4/movie?page=1&limit=5&name={cleaned_query}"
     async with aiohttp.ClientSession() as session:
         try:
             async with session.get(fallback_url, headers=headers) as resp:
@@ -580,10 +594,12 @@ async def set_commands(bot: Bot):
     await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
 
 async def main():
-    # Очищаем вебхук для чистого старта с новым токеном без конфликтов
+    # Запускаем веб-сервер-заглушку для порта Render
+    await start_web_server()
+    # Удаляем вебхук и старые сессии перед запуском поллинга
     await bot.delete_webhook(drop_pending_updates=True)
     await set_commands(bot)
-    logging.info("Bot KINOrave successfully started with new token!")
+    logging.info("Bot KINOrave successfully started with web server stub and new token!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
