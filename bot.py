@@ -15,7 +15,8 @@ from aiogram.types import (
     InlineQueryResultArticle,
     InputTextMessageContent,
     ReplyKeyboardMarkup,
-    KeyboardButton
+    KeyboardButton,
+    FSInputFile
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +37,7 @@ dp = Dispatcher()
 USERS_FILE = "users.txt"
 REFS_FILE = "referrals.txt"
 CONFIG_FILE = "bot_mode.txt"
+MAINTENANCE_FILE = "maintenance.txt"
 
 HEADERS = {
     "X-API-KEY": KP_API_KEY,
@@ -43,7 +45,6 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
-# РАСШИРЕННАЯ ЛОКАЛЬНАЯ БАЗА G-CON
 LOCAL_MOVIES_DB = [
     {"title": "Интерстеллар", "year": "2014", "rating": "8.6", "imdb": "8.7", "tmdb": "84%", "duration": "169 мин.", "desc": "фильм | кр:8.6 | imdb:8.7 | 2014 | США | фантастика, драма", "id": 258687},
     {"title": "Начало", "year": "2010", "rating": "8.7", "imdb": "8.8", "tmdb": "83%", "duration": "148 мин.", "desc": "фильм | кр:8.7 | imdb:8.8 | 2010 | США | фантастика, боевик", "id": 447},
@@ -72,7 +73,6 @@ LOCAL_MOVIES_DB = [
 ]
 
 def clean_title(text: str) -> str:
-    """Убирает спецсимволы и приводит к нижнему регистру для нечеткого сравнения"""
     return re.sub(r'[^а-яa-z0-9]', '', text.lower())
 
 def get_current_mode() -> str:
@@ -84,6 +84,18 @@ def get_current_mode() -> str:
 def set_current_mode(mode: str):
     with open(CONFIG_FILE, "w") as f:
         f.write(mode)
+
+def is_maintenance() -> bool:
+    return os.path.exists(MAINTENANCE_FILE)
+
+def toggle_maintenance() -> bool:
+    if os.path.exists(MAINTENANCE_FILE):
+        os.remove(MAINTENANCE_FILE)
+        return False
+    else:
+        with open(MAINTENANCE_FILE, "w") as f:
+            f.write("ON")
+        return True
 
 def save_user(user_id: int, referrer_id: int = None):
     users = set()
@@ -97,11 +109,14 @@ def save_user(user_id: int, referrer_id: int = None):
             with open(REFS_FILE, "a") as f:
                 f.write(f"{referrer_id}:{user_id}\n")
 
-def get_users_count():
+def get_users_list() -> list:
     if not os.path.exists(USERS_FILE):
-        return 0
+        return []
     with open(USERS_FILE, "r") as f:
-        return len(set(line.strip() for line in f if line.strip()))
+        return [int(line.strip()) for line in f if line.strip()]
+
+def get_users_count():
+    return len(get_users_list())
 
 def get_referral_count(user_id: int) -> int:
     if not os.path.exists(REFS_FILE):
@@ -153,10 +168,12 @@ def get_share_kb(username, uid):
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📧 Отправить ссылку", url=share_url)], [InlineKeyboardButton(text="🔍 К поиску", switch_inline_query_current_chat="")]])
 
 def get_admin_kb():
+    m_status = "🔴 Отключить техобслуживание" if is_maintenance() else "🟢 Включить техобслуживание"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🌐 Включить Глобальный режим", callback_data="admin_global")],
-        [InlineKeyboardButton(text="📁 Включить Локальный G-CON", callback_data="admin_local")],
-        [InlineKeyboardButton(text="⚙️ Авторежим (Auto-Failover)", callback_data="admin_auto")]
+        [InlineKeyboardButton(text="🌐 Глобальный режим", callback_data="admin_global"), InlineKeyboardButton(text="📁 Локальный G-CON", callback_data="admin_local")],
+        [InlineKeyboardButton(text="⚙️ Авторежим (Failover)", callback_data="admin_auto")],
+        [InlineKeyboardButton(text=m_status, callback_data="admin_maint")],
+        [InlineKeyboardButton(text="📤 Выгрузить базу пользователей (.txt)", callback_data="admin_export")]
     ])
 
 def get_movie_kb(title, kp_id=None):
@@ -172,6 +189,10 @@ def get_movie_kb(title, kp_id=None):
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
+    if is_maintenance() and user_id != ADMIN_ID:
+        await message.answer("🛠 **В боте проводятся плановые технические работы.**\n\nСкоро мы вернемся с обновлениями! 🎬", parse_mode="Markdown")
+        return
+
     args = message.text.split()
     referrer_id = None
     if len(args) > 1 and args[1].startswith("ref_"):
@@ -201,12 +222,41 @@ async def admin_panel(message: types.Message):
         return
 
     mode = get_current_mode()
+    maint_status = "ВКЛЮЧЕНО 🔴 (Заглушка активна)" else "ВЫКЛЮЧЕНО 🟢" if not is_maintenance() else "ВКЛЮЧЕНО 🔴"
     txt = (
         f"🛠 **Админ-панель KINOrave**\n\n"
-        f"⚙️ Текущий режим: **{mode.upper()}**\n"
-        f"👥 Всего пользователей: **{get_users_count()}**"
+        f"⚙️ Режим поиска: **{mode.upper()}**\n"
+        f"🛠 Тех. обслуживание: **{'ВКЛЮЧЕНО 🔴' if is_maintenance() else 'ВЫКЛЮЧЕНО 🟢'}**\n"
+        f"👥 Всего пользователей: **{get_users_count()}**\n\n"
+        f"📢 **Рассылка:** напишите `/broadcast [ваш текст]`"
     )
     await message.answer(txt, reply_markup=get_admin_kb(), parse_mode="Markdown")
+
+@dp.message(Command("broadcast"))
+async def broadcast_cmd(message: types.Message):
+    global ADMIN_ID
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    text_to_send = message.text.replace("/broadcast", "").strip()
+    if not text_to_send:
+        await message.answer("⚠️ Введите текст для рассылки:\n`/broadcast Ваше сообщение здесь`", parse_mode="Markdown")
+        return
+
+    users = get_users_list()
+    success = 0
+    blocked = 0
+    
+    status_msg = await message.answer(f"🚀 Запуск рассылки для {len(users)} зрителей...")
+
+    for uid in users:
+        try:
+            await bot.send_message(chat_id=uid, text=text_to_send, parse_mode="Markdown")
+            success += 1
+        except Exception:
+            blocked += 1
+
+    await status_msg.edit_text(f"✅ **Рассылка успешно завершена!**\n\n📬 Доставлено: `{success}`\n🚫 Заблокировали бота: `{blocked}`", parse_mode="Markdown")
 
 @dp.callback_query(lambda c: c.data.startswith("admin_"))
 async def admin_switcher(callback: types.CallbackQuery):
@@ -224,21 +274,43 @@ async def admin_switcher(callback: types.CallbackQuery):
     elif d == "admin_auto":
         set_current_mode("auto")
         await callback.answer("⚙️ Включен Авто-Failover режим!", show_alert=True)
-    
-    await callback.message.edit_text(f"🛠 **Админ-панель**\nРежим: **{get_current_mode().upper()}**", parse_mode="Markdown", reply_markup=get_admin_kb())
+    elif d == "admin_maint":
+        state = toggle_maintenance()
+        status_text = "включено 🔴" if state else "выключено 🟢"
+        await callback.answer(f"🛠 Техническое обслуживание {status_text}!", show_alert=True)
+    elif d == "admin_export":
+        if os.path.exists(USERS_FILE):
+            file = FSInputFile(USERS_FILE)
+            await callback.message.answer_document(file, caption="📁 База пользователей KINOrave")
+        else:
+            await callback.answer("⚠️ Файл базы пуст.", show_alert=True)
+        return
+
+    mode = get_current_mode()
+    txt = (
+        f"🛠 **Админ-панель KINOrave**\n\n"
+        f"⚙️ Режим поиска: **{mode.upper()}**\n"
+        f"🛠 Тех. обслуживание: **{'ВКЛЮЧЕНО 🔴' if is_maintenance() else 'ВЫКЛЮЧЕНО 🟢'}**\n"
+        f"👥 Всего пользователей: **{get_users_count()}**"
+    )
+    await callback.message.edit_text(txt, parse_mode="Markdown", reply_markup=get_admin_kb())
 
 @dp.message(Command("search"))
 async def search_cmd(message: types.Message):
+    if is_maintenance() and message.from_user.id != ADMIN_ID:
+        return
     save_user(message.from_user.id)
     try: await message.delete()
     except Exception: pass
     if not await check_subscription(message.from_user.id):
         await message.answer("Подпишись на канал!", reply_markup=get_sub_kb())
         return
-    await message.answer("🔍 **Поиск фильмов и сериалов**\n\nНапиши название кино в чат:", reply_markup=get_search_kb(), parse_Mode="Markdown")
+    await message.answer("🔍 **Поиск фильмов и сериалов**\n\nНапиши название кино в чат:", reply_markup=get_search_kb(), parse_mode="Markdown")
 
 @dp.message(Command("collections"))
 async def collections_cmd(message: types.Message):
+    if is_maintenance() and message.from_user.id != ADMIN_ID:
+        return
     save_user(message.from_user.id)
     try: await message.delete()
     except Exception: pass
@@ -249,6 +321,8 @@ async def collections_cmd(message: types.Message):
 
 @dp.message(Command("filter"))
 async def filter_cmd(message: types.Message):
+    if is_maintenance() and message.from_user.id != ADMIN_ID:
+        return
     save_user(message.from_user.id)
     try: await message.delete()
     except Exception: pass
@@ -259,6 +333,8 @@ async def filter_cmd(message: types.Message):
 
 @dp.message(Command("settings"))
 async def settings_cmd(message: types.Message):
+    if is_maintenance() and message.from_user.id != ADMIN_ID:
+        return
     save_user(message.from_user.id)
     try: await message.delete()
     except Exception: pass
@@ -270,6 +346,8 @@ async def settings_cmd(message: types.Message):
 @dp.message(Command("share"))
 async def share_cmd(message: types.Message):
     uid = message.from_user.id
+    if is_maintenance() and uid != ADMIN_ID:
+        return
     save_user(uid)
     try: await message.delete()
     except Exception: pass
@@ -291,6 +369,8 @@ async def stats_cmd(message: types.Message):
 @dp.message(lambda m: m.text in ["🔍 Поиск", "📁 Подборки", "🌪 Фильтр", "⚙️ Настройки", "🎁 Поделиться"])
 async def reply_handler(message: types.Message):
     uid = message.from_user.id
+    if is_maintenance() and uid != ADMIN_ID:
+        return
     save_user(uid)
     if not await check_subscription(uid):
         await message.answer("Подпишись на канал!", reply_markup=get_sub_kb())
@@ -320,10 +400,13 @@ async def sub_callback(callback: types.CallbackQuery):
     else:
         await callback.answer("❌ Подпишись на канал для доступа!", show_alert=True)
 
-# ЖЕЛЕЗОБЕТОННЫЙ МНОГОУРОВНЕВЫЙ ПОИСК С ФАЗЗИ-МАТЧИНГОМ И FAILOVER
 @dp.message()
 async def text_search(message: types.Message):
     uid = message.from_user.id
+    if is_maintenance() and uid != ADMIN_ID:
+        await message.answer("🛠 В боте проводятся плановые технические работы. Скоро вернемся!")
+        return
+
     save_user(uid)
     if not await check_subscription(uid):
         await message.answer("Для поиска подпишитесь на канал KINOrave!", reply_markup=get_sub_kb())
@@ -338,7 +421,6 @@ async def text_search(message: types.Message):
     api_failed = False
     clean_q = clean_title(q)
 
-    # 1. Если включен локальный режим или авто-режим, пробуем нечеткий поиск по базе G-CON
     if mode == "local":
         api_failed = True
         for movie in LOCAL_MOVIES_DB:
@@ -346,7 +428,6 @@ async def text_search(message: types.Message):
                 found_film = movie
                 break
     else:
-        # Уровень 1: Запрос к основному API Кинопоиска
         url = "https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword"
         params = {"keyword": q, "page": 1}
         try:
@@ -374,7 +455,6 @@ async def text_search(message: types.Message):
         except Exception:
             api_failed = True
 
-    # Уровень 2: Если глобальный поиск недоступен или ничего не нашел — включаем умный нечеткий локальный поиск G-CON
     if not found_film:
         api_failed = True
         for movie in LOCAL_MOVIES_DB:
@@ -484,6 +564,7 @@ async def on_startup(bot: Bot):
         BotCommand(command="settings", description="Настройки"),
         BotCommand(command="share", description="Поделиться"),
         BotCommand(command="admin", description="Админ-панель"),
+        BotCommand(command="broadcast", description="Рассылка"),
         BotCommand(command="stats", description="Статистика")
     ])
     try: await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
@@ -497,5 +578,5 @@ def main():
     setup_application(app, dp, bot=bot)
     web.run_app(app, host="0.0.0.0", port=PORT)
 
-if __name__ == "main":
+if __name__ == "__main__":
     main()
