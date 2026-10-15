@@ -26,7 +26,9 @@ BOT_TOKEN = "8410105070:AAHUuktDtUm_ICmRiRx0HghwsNkfYcNYD0Y"
 KP_API_KEY = "8c1e3d22-0321-4952-a86f-37f3d9d3000f"
 CHANNEL_LINK = "https://t.me/kinorave_tg"
 CHANNEL_USERNAME = "@kinorave_tg"
-ADMIN_ID = 0
+
+# ТВЯ ЖЕСТКАЯ АДМИНСКАЯ ЗАЩИТА
+ADMIN_ID = 6444735646
 
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 WEBHOOK_PATH = "/bot/" + BOT_TOKEN
@@ -41,7 +43,8 @@ CONFIG_FILE = "bot_mode.txt"
 MAINTENANCE_FILE = "maintenance.txt"
 
 FLOOD_CONTROL = {}
-FLOOD_LIMIT_SECONDS = 1.0
+ATTACK_ALERT_COOLDOWN = {}
+FLOOD_LIMIT_SECONDS = 0.8
 
 HEADERS = {
     "X-API-KEY": KP_API_KEY,
@@ -50,59 +53,36 @@ HEADERS = {
 }
 
 LOCAL_MOVIES_DB = [
-    {"title": "Интерстеллар", "year": "2014", "rating": "8.6", "imdb": "8.7", "tmdb": "84%", "duration": "169 мин.", "desc": "фильм | кр:8.6 | imdb:8.7 | 2014 | США | фантастика, драма", "id": 258687},
-    {"title": "Начало", "year": "2010", "rating": "8.7", "imdb": "8.8", "tmdb": "83%", "duration": "148 мин.", "desc": "фильм | кр:8.7 | imdb:8.8 | 2010 | США | фантастика, боевик", "id": 447},
-    {"title": "Мстители: Финал", "year": "2019", "rating": "7.9", "imdb": "8.4", "tmdb": "82%", "duration": "181 мин.", "desc": "фильм | кр:7.9 | imdb:8.4 | 2019 | США | фантастика, боевик", "id": 843650},
-    {"title": "Джокер", "year": "2019", "rating": "8.0", "imdb": "8.4", "tmdb": "81%", "duration": "122 мин.", "desc": "фильм | кр:8.0 | imdb:8.4 | 2019 | США | драма, триллер", "id": 1048334},
-    {"title": "Побег из Шоушенка", "year": "1994", "rating": "9.1", "imdb": "9.3", "tmdb": "87%", "duration": "142 мин.", "desc": "фильм | кр:9.1 | imdb:9.3 | 1994 | США | драма", "id": 326},
-    {"title": "Зеленая миля", "year": "1999", "rating": "9.1", "imdb": "8.6", "tmdb": "85%", "duration": "189 мин.", "desc": "фильм | кр:9.1 | imdb:8.6 | 1999 | США | драма, криминал", "id": 435},
-    {"title": "Титаник", "year": "1997", "rating": "8.4", "imdb": "7.9", "tmdb": "79%", "duration": "194 мин.", "desc": "фильм | кр:8.4 | imdb:7.9 | 1997 | США | драма, мелодрама", "id": 597},
-    {"title": "Форрест Гамп", "year": "1994", "rating": "8.9", "imdb": "8.8", "tmdb": "85%", "duration": "142 мин.", "desc": "фильм | кр:8.9 | imdb:8.8 | 1994 | США | драма, комедия", "id": 13},
-    {"title": "Король Лев", "year": "1994", "rating": "8.8", "imdb": "8.5", "tmdb": "83%", "duration": "88 мин.", "desc": "мультфильм | кр:8.8 | imdb:8.5 | 1994 | США | анимация, драма", "id": 8587},
-    {"title": "Гладиатор", "year": "2000", "rating": "8.6", "imdb": "8.5", "tmdb": "82%", "duration": "155 мин.", "desc": "фильм | кр:8.6 | imdb:8.5 | 2000 | США | боевик, драма", "id": 98},
-    {"title": "Аватар", "year": "2009", "rating": "8.0", "imdb": "7.9", "tmdb": "76%", "duration": "162 мин.", "desc": "фильм | кр:8.0 | imdb:7.9 | 2009 | США | фантастика, приключения", "id": 199},
-    {"title": "Терминатор 2: Судный день", "year": "1991", "rating": "8.3", "imdb": "8.6", "tmdb": "81%", "duration": "137 мин.", "desc": "фильм | кр:8.3 | imdb:8.6 | 1991 | США | фантастика, боевик", "id": 280},
-    {"title": "Матрица", "year": "1999", "rating": "8.5", "imdb": "8.7", "tmdb": "82%", "duration": "136 мин.", "desc": "фильм | кр:8.5 | imdb:8.7 | 1999 | США | фантастика, боевик", "id": 603},
-    {"title": "Властелин колец: Братство Кольца", "year": "2001", "rating": "8.6", "imdb": "8.8", "tmdb": "84%", "duration": "178 мин.", "desc": "фильм | кр:8.6 | imdb:8.8 | 2001 | Новая Зеландия | фэнтези, приключения", "id": 120},
-    {"title": "Властелин колец: Две крепости", "year": "2002", "rating": "8.6", "imdb": "8.8", "tmdb": "84%", "duration": "179 мин.", "desc": "фильм | кр:8.6 | imdb:8.8 | 2002 | Новая Зеландия | фэнтези, приключения", "id": 121},
-    {"title": "Властелин колец: Возвращение короля", "year": "2003", "rating": "8.7", "imdb": "9.0", "tmdb": "85%", "duration": "201 мин.", "desc": "фильм | кр:8.7 | imdb:9.0 | 2003 | Новая Зеландия | фэнтези, приключения", "id": 122},
-    {"title": "Темный рыцарь", "year": "2008", "rating": "8.5", "imdb": "9.0", "tmdb": "85%", "duration": "152 мин.", "desc": "фильм | кр:8.5 | imdb:9.0 | 2008 | США | боевик, триллер, драма", "id": 155},
-    {"title": "Бойцовский клуб", "year": "1999", "rating": "8.7", "imdb": "8.8", "tmdb": "84%", "duration": "139 мин.", "desc": "фильм | кр:8.7 | imdb:8.8 | 1999 | США | триллер, драма, криминал", "id": 550},
-    {"title": "Криминальное чтиво", "year": "1994", "rating": "8.6", "imdb": "8.9", "tmdb": "85%", "duration": "154 мин.", "desc": "фильм | кр:8.6 | imdb:8.9 | 1994 | США | криминал, драма", "id": 680},
-    {"title": "Шестое чувство", "year": "1999", "rating": "8.2", "imdb": "8.2", "tmdb": "79%", "duration": "107 мин.", "desc": "фильм | кр:8.2 | imdb:8.2 | 1999 | США | триллер, драма, детектив", "id": 745},
-    {"title": "Собачье сердце", "year": "1988", "rating": "8.8", "imdb": "8.5", "tmdb": "81%", "duration": "130 мин.", "desc": "фильм | кр:8.8 | imdb:8.5 | 1988 | СССР | фантастика, драма, комедия", "id": 4321},
-    {"title": "Брат", "year": "1997", "rating": "8.3", "imdb": "8.0", "tmdb": "76%", "duration": "100 мин.", "desc": "фильм | кр:8.3 | imdb:8.0 | 1997 | Россия | драма, криминал, боевик", "id": 4212},
-    {"title": "Брат 2", "year": "2000", "rating": "8.1", "imdb": "8.0", "tmdb": "75%", "duration": "127 мин.", "desc": "фильм | кр:8.1 | imdb:8.0 | 2000 | Россия | боевик, криминал, драма", "id": 4213},
-    {"title": "Операция «Ы» и другие приключения Шурика", "year": "1965", "rating": "8.7", "imdb": "8.4", "tmdb": "82%", "duration": "95 мин.", "desc": "фильм | кр:8.7 | imdb:8.4 | 1965 | СССР | комедия, мелодрама", "id": 4322},
-    {"title": "Джентльмены удачи", "year": "1971", "rating": "8.5", "imdb": "8.2", "tmdb": "79%", "duration": "88 мин.", "desc": "фильм | кр:8.5 | imdb:8.2 | 1971 | СССР | комедия, криминал", "id": 4323},
-    {"title": "Иван Васильевич меняет профессию", "year": "1973", "rating": "8.8", "imdb": "8.3", "tmdb": "82%", "duration": "88 мин.", "desc": "фильм | кр:8.8 | imdb:8.3 | 1973 | СССР | комедия, фантастика", "id": 4324},
-    {"title": "Бриллиантовая рука", "year": "1968", "rating": "8.5", "imdb": "8.3", "tmdb": "80%", "duration": "94 мин.", "desc": "фильм | кр:8.5 | imdb:8.3 | 1968 | СССР | комедия, криминал", "id": 4325},
-    {"title": "Во все тяжкие", "year": "2008", "rating": "8.9", "imdb": "9.5", "tmdb": "89%", "duration": "49 мин.", "desc": "сериал | кр:8.9 | imdb:9.5 | 2008 | США | драма, криминал, триллер", "id": 5002},
-    {"title": "Игра престолов", "year": "2011", "rating": "9.0", "imdb": "9.2", "tmdb": "84%", "duration": "57 мин.", "desc": "сериал | кр:9.0 | imdb:9.2 | 2011 | США | фэнтези, драма, приключения", "id": 5003},
-    {"title": "Сверхъестественное", "year": "2005", "rating": "8.2", "imdb": "8.4", "tmdb": "82%", "duration": "43 мин.", "desc": "сериал | кр:8.2 | imdb:8.4 | 2005 | США | фэнтези, ужасы, детектив", "id": 5004},
-    {"title": "Рик и Морти", "year": "2013", "rating": "8.8", "imdb": "9.1", "tmdb": "85%", "duration": "23 мин.", "desc": "сериал | кр:8.8 | imdb:9.1 | 2013 | США | мультфильм, фантастика, комедия", "id": 5005},
-    {"title": "Острые козырьки", "year": "2013", "rating": "8.3", "imdb": "8.8", "tmdb": "85%", "duration": "60 мин.", "desc": "сериал | кр:8.3 | imdb:8.8 | 2013 | Великобритания | драма, криминал", "id": 5006},
-    {"title": "Шерлок", "year": "2010", "rating": "8.9", "imdb": "9.1", "tmdb": "85%", "duration": "90 мин.", "desc": "сериал | кр:8.9 | imdb:9.1 | 2010 | Великобритания | детектив, драма, криминал", "id": 5007},
-    {"title": "Ведьмак", "year": "2019", "rating": "7.3", "imdb": "8.0", "tmdb": "78%", "duration": "60 мин.", "desc": "сериал | кр:7.3 | imdb:8.0 | 2019 | США | фэнтези, приключения, экшен", "id": 5008},
-    {"title": "Пацаны", "year": "2019", "rating": "8.3", "imdb": "8.7", "tmdb": "85%", "duration": "60 мин.", "desc": "сериал | кр:8.3 | imdb:8.7 | 2019 | США | фантастика, боевик, комедия", "id": 5009}
+    {"title": "Интерстеллар", "year": "2014", "rating": "8.6", "imdb": "8.7", "tmdb": "84%", "duration": "169 мин.", "desc": "фильм | кр:8.6 | imdb:8.7 | 2014 | США | фантастика, драма", "poster": "https://kinorium-images.imgix.net/movie/poster/1179782/h800/v_63749718.jpg", "id": 258687},
+    {"title": "Начало", "year": "2010", "rating": "8.7", "imdb": "8.8", "tmdb": "83%", "duration": "148 мин.", "desc": "фильм | кр:8.7 | imdb:8.8 | 2010 | США | фантастика, боевик", "poster": "https://kinorium-images.imgix.net/movie/poster/460317/h800/v_63749673.jpg", "id": 447},
+    {"title": "Мстители: Финал", "year": "2019", "rating": "7.9", "imdb": "8.4", "tmdb": "82%", "duration": "181 мин.", "desc": "фильм | кр:7.9 | imdb:8.4 | 2019 | США | фантастика, боевик", "poster": "https://kinorium-images.imgix.net/movie/poster/1410940/h800/v_63677764.jpg", "id": 843650},
+    {"title": "Джокер", "year": "2019", "rating": "8.0", "imdb": "8.4", "tmdb": "81%", "duration": "122 мин.", "desc": "фильм | кр:8.0 | imdb:8.4 | 2019 | США | драма, триллер", "poster": "https://kinorium-images.imgix.net/movie/poster/2253335/h800/v_63749679.jpg", "id": 1048334},
+    {"title": "Побег из Шоушенка", "year": "1994", "rating": "9.1", "imdb": "9.3", "tmdb": "87%", "duration": "142 мин.", "desc": "фильм | кр:9.1 | imdb:9.3 | 1994 | США | драма", "poster": "https://kinorium-images.imgix.net/movie/poster/389025/h800/v_63749688.jpg", "id": 326},
+    {"title": "Зеленая миля", "year": "1999", "rating": "9.1", "imdb": "8.6", "tmdb": "85%", "duration": "189 мин.", "desc": "фильм | кр:9.1 | imdb:8.6 | 1999 | США | драма, криминал", "poster": "https://kinorium-images.imgix.net/movie/poster/406180/h800/v_63749685.jpg", "id": 435},
+    {"title": "Титаник", "year": "1997", "rating": "8.4", "imdb": "7.9", "tmdb": "79%", "duration": "194 мин.", "desc": "фильм | кр:8.4 | imdb:7.9 | 1997 | США | драма, мелодрама", "poster": "https://kinorium-images.imgix.net/movie/poster/393278/h800/v_63749712.jpg", "id": 597},
+    {"title": "Форрест Гамп", "year": "1994", "rating": "8.9", "imdb": "8.8", "tmdb": "85%", "duration": "142 мин.", "desc": "фильм | кр:8.9 | imdb:8.8 | 1994 | США | драма, комедия", "poster": "https://kinorium-images.imgix.net/movie/poster/394145/h800/v_63749687.jpg", "id": 13},
+    {"title": "Король Лев", "year": "1994", "rating": "8.8", "imdb": "8.5", "tmdb": "83%", "duration": "88 мин.", "desc": "мультфильм | кр:8.8 | imdb:8.5 | 1994 | США | анимация, драма", "poster": "https://kinorium-images.imgix.net/movie/poster/400612/h800/v_63749692.jpg", "id": 8587},
+    {"title": "Гладиатор", "year": "2000", "rating": "8.6", "imdb": "8.5", "tmdb": "82%", "duration": "155 мин.", "desc": "фильм | кр:8.6 | imdb:8.5 | 2000 | США | боевик, драма", "poster": "https://kinorium-images.imgix.net/movie/poster/408993/h800/v_63749675.jpg", "id": 98},
+    {"title": "Аватар", "year": "2009", "rating": "8.0", "imdb": "7.9", "tmdb": "76%", "duration": "162 мин.", "desc": "фильм | кр:8.0 | imdb:7.9 | 2009 | США | фантастика, приключения", "poster": "https://kinorium-images.imgix.net/movie/poster/447990/h800/v_63749670.jpg", "id": 199},
+    {"title": "Терминатор 2: Судный день", "year": "1991", "rating": "8.3", "imdb": "8.6", "tmdb": "81%", "duration": "137 мин.", "desc": "фильм | кр:8.3 | imdb:8.6 | 1991 | США | фантастика, боевик", "poster": "https://kinorium-images.imgix.net/movie/poster/392180/h800/v_63749714.jpg", "id": 280},
+    {"title": "Матрица", "year": "1999", "rating": "8.5", "imdb": "8.7", "tmdb": "82%", "duration": "136 мин.", "desc": "фильм | кр:8.5 | imdb:8.7 | 1999 | США | фантастика, боевик", "poster": "https://kinorium-images.imgix.net/movie/poster/391942/h800/v_63749710.jpg", "id": 603},
+    {"title": "Темный рыцарь", "year": "2008", "rating": "8.5", "imdb": "9.0", "tmdb": "85%", "duration": "152 мин.", "desc": "фильм | кр:8.5 | imdb:9.0 | 2008 | США | боевик, триллер, драма", "poster": "https://kinorium-images.imgix.net/movie/poster/439768/h800/v_63749674.jpg", "id": 155},
+    {"title": "Бойцовский клуб", "year": "1999", "rating": "8.7", "imdb": "8.8", "tmdb": "84%", "duration": "139 мин.", "desc": "фильм | кр:8.7 | imdb:8.8 | 1999 | США | триллер, драма, криминал", "poster": "https://kinorium-images.imgix.net/movie/poster/389470/h800/v_63749678.jpg", "id": 550},
+    {"title": "Криминальное чтиво", "year": "1994", "rating": "8.6", "imdb": "8.9", "tmdb": "85%", "duration": "154 мин.", "desc": "фильм | кр:8.6 | imdb:8.9 | 1994 | США | криминал, драма", "poster": "https://kinorium-images.imgix.net/movie/poster/389467/h800/v_63749706.jpg", "id": 680},
+    {"title": "Брат", "year": "1997", "rating": "8.3", "imdb": "8.0", "tmdb": "76%", "duration": "100 мин.", "desc": "фильм | кр:8.3 | imdb:8.0 | 1997 | Россия | драма, криминал, боевик", "poster": "https://kinorium-images.imgix.net/movie/poster/428385/h800/v_63749677.jpg", "id": 4212},
+    {"title": "Брат 2", "year": "2000", "rating": "8.1", "imdb": "8.0", "tmdb": "75%", "duration": "127 мин.", "desc": "фильм | кр:8.1 | imdb:8.0 | 2000 | Россия | боевик, криминал, драма", "poster": "https://kinorium-images.imgix.net/movie/poster/431872/h800/v_63749676.jpg", "id": 4213},
+    {"title": "Во все тяжкие", "year": "2008", "rating": "8.9", "imdb": "9.5", "tmdb": "89%", "duration": "49 мин.", "desc": "сериал | кр:8.9 | imdb:9.5 | 2008 | США | драма, криминал, триллер", "poster": "https://kinorium-images.imgix.net/movie/poster/982110/h800/v_63749704.jpg", "id": 5002},
+    {"title": "Игра престолов", "year": "2011", "rating": "9.0", "imdb": "9.2", "tmdb": "84%", "duration": "57 мин.", "desc": "сериал | кр:9.0 | imdb:9.2 | 2011 | США | фэнтези, драма, приключения", "poster": "https://kinorium-images.imgix.net/movie/poster/1118129/h800/v_63749722.jpg", "id": 5003}
 ]
 
 def clean_title(text: str) -> str:
     return re.sub(r'[^а-яa-z0-9]', '', text.lower())
 
-def is_flood(user_id: int) -> bool:
-    now = time.time()
-    if user_id in FLOOD_CONTROL:
-        if now - FLOOD_CONTROL[user_id] < FLOOD_LIMIT_SECONDS:
-            return True
-    FLOOD_CONTROL[user_id] = now
-    return False
-
 def get_current_mode() -> str:
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r") as f:
             return f.read().strip()
-    return "auto"
+    return "global"
 
 def set_current_mode(mode: str):
     with open(CONFIG_FILE, "w") as f:
@@ -194,9 +174,16 @@ def get_admin_kb():
     m_status = "🔴 Отключить техобслуживание" if is_maintenance() else "🟢 Включить техобслуживание"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🌐 Глобальный режим", callback_data="admin_global"), InlineKeyboardButton(text="📁 Локальный G-CON", callback_data="admin_local")],
-        [InlineKeyboardButton(text="⚙️ Авторежим (Failover)", callback_data="admin_auto")],
         [InlineKeyboardButton(text=m_status, callback_data="admin_maint")],
-        [InlineKeyboardButton(text="📤 Выгрузить базу пользователей (.txt)", callback_data="admin_export")]
+        [InlineKeyboardButton(text="📤 Выгрузить базу (.txt)", callback_data="admin_export")]
+    ])
+
+def get_attack_alert_kb():
+    maint_text = "🔴 Включить тех. обслуживание" if not is_maintenance() else "🟢 Выключить тех. обслуживание"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=maint_text, callback_data="alert_toggle_maint")],
+        [InlineKeyboardButton(text="📁 Перевести в локальный режим", callback_data="alert_set_local")],
+        [InlineKeyboardButton(text="🛡 Сбросить угрозу", callback_data="alert_dismiss")]
     ])
 
 def get_movie_kb(title, kp_id=None):
@@ -236,10 +223,6 @@ async def start_cmd(message: types.Message):
 
 @dp.message(Command("admin"))
 async def admin_panel(message: types.Message):
-    global ADMIN_ID
-    if ADMIN_ID == 0:
-        ADMIN_ID = message.from_user.id
-    
     if message.from_user.id != ADMIN_ID:
         await message.answer("⛔️ Доступ запрещен.")
         return
@@ -257,7 +240,6 @@ async def admin_panel(message: types.Message):
 
 @dp.message(Command("broadcast"))
 async def broadcast_cmd(message: types.Message):
-    global ADMIN_ID
     if message.from_user.id != ADMIN_ID:
         return
     
@@ -294,9 +276,6 @@ async def admin_switcher(callback: types.CallbackQuery):
     elif d == "admin_local":
         set_current_mode("local")
         await callback.answer("📁 Включен Локальный режим G-CON!", show_alert=True)
-    elif d == "admin_auto":
-        set_current_mode("auto")
-        await callback.answer("⚙️ Включен Авто-Failover режим!", show_alert=True)
     elif d == "admin_maint":
         state = toggle_maintenance()
         status_text = "включено 🔴" if state else "выключено 🟢"
@@ -319,6 +298,25 @@ async def admin_switcher(callback: types.CallbackQuery):
     )
     await callback.message.edit_text(txt, parse_mode="Markdown", reply_markup=get_admin_kb())
 
+@dp.callback_query(lambda c: c.data.startswith("alert_"))
+async def alert_callback_handler(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("⛔️ Доступ запрещен!", show_alert=True)
+        return
+    
+    d = callback.data
+    if d == "alert_toggle_maint":
+        state = toggle_maintenance()
+        st_text = "ВКЛЮЧЕНО 🔴 (Бот изолирован)" if state else "ВЫКЛЮЧЕНО 🟢 (Бот активен)"
+        await callback.message.edit_text(f"🚨 **Статус безопасности изменен!**\nТех. обслуживание: {st_text}", parse_mode="Markdown")
+        await callback.answer("Готово!")
+    elif d == "alert_set_local":
+        set_current_mode("local")
+        await callback.message.edit_text("🚨 **Режим безопасности:** Бот принудительно переведен на **локальный поиск G-CON** для защиты от внешнего штурма.", parse_mode="Markdown")
+        await callback.answer("Переведено на локальный режим!")
+    elif d == "alert_dismiss":
+        await callback.message.edit_text("🛡 **Тревога сброшена.** Система работает в штатном режиме.", parse_mode="Markdown")
+        await callback.answer("Угроза отклонена.")
 @dp.message(Command("search"))
 async def search_cmd(message: types.Message):
     if is_maintenance() and message.from_user.id != ADMIN_ID:
@@ -423,13 +421,35 @@ async def sub_callback(callback: types.CallbackQuery):
         await callback.message.answer("🎬 Добро пожаловать в KINOrave!", reply_markup=get_start_kb(), parse_mode="Markdown")
     else:
         await callback.answer("❌ Подпишись на канал для доступа!", show_alert=True)
-
 @dp.message()
 async def text_search(message: types.Message):
     uid = message.from_user.id
+    now = time.time()
     
-    if is_flood(uid) and uid != ADMIN_ID:
-        return  
+    if uid != ADMIN_ID:
+        if uid in FLOOD_CONTROL and (now - FLOOD_CONTROL[uid]) < FLOOD_LIMIT_SECONDS:
+            last_alert = ATTACK_ALERT_COOLDOWN.get(uid, 0)
+            if now - last_alert > 30:
+                ATTACK_ALERT_COOLDOWN[uid] = now
+                try:
+                    await bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=(
+                            f"🚨 **ВНИМАНИЕ: Обнаружена попытка кибератаки / спама!**\n\n"
+                            f"👤 **Пользователь ID:** `{uid}`\n"
+                            f"⚡️ **Имя:** {message.from_user.full_name} (@{message.from_user.username})\n"
+                            f"⏱ **Частота:** Превышен порог запросов\n"
+                            f"💬 **Текст запроса:** `{message.text[:50]}`\n\n"
+                            f"👇 *Выберите действие для защиты бота:*"
+                        ),
+                        reply_markup=get_attack_alert_kb(),
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    pass
+            return  
+
+    FLOOD_CONTROL[uid] = now
 
     if is_maintenance() and uid != ADMIN_ID:
         await message.answer("🛠 В боте проводятся плановые технические работы. Скоро вернемся!")
@@ -446,11 +466,9 @@ async def text_search(message: types.Message):
 
     mode = get_current_mode()
     found_film = None
-    api_failed = False
     clean_q = clean_title(q)
 
     if mode == "local":
-        api_failed = True
         for movie in LOCAL_MOVIES_DB:
             if clean_q in clean_title(movie["title"]):
                 found_film = movie
@@ -469,6 +487,12 @@ async def text_search(message: types.Message):
                             title = item.get('nameRu') or item.get('nameEn') or q
                             year = str(item.get('year', '2023'))
                             rat = str(item.get('rating', '7.9'))
+                            kp_id = item.get('filmId', 0)
+                            
+                            poster_url = f"https://kinorium-images.imgix.net/movie/poster/{kp_id}/h800/v_63749718.jpg" if kp_id else "https://kinorium-images.imgix.net/movie/poster/1179782/h800/v_63749718.jpg"
+                            if item.get('posterUrl'):
+                                poster_url = item.get('posterUrl')
+
                             found_film = {
                                 "title": title,
                                 "year": year,
@@ -476,27 +500,17 @@ async def text_search(message: types.Message):
                                 "imdb": "8.2",
                                 "tmdb": "82%",
                                 "desc": f"фильм | кр:{rat} | imdb:8.2 | {year} | США | драма, приключения",
-                                "id": item.get('filmId', 0)
+                                "poster": poster_url,
+                                "id": kp_id
                             }
-                    else:
-                        api_failed = True
         except Exception:
-            api_failed = True
+            pass
 
     if not found_film:
-        api_failed = True
         for movie in LOCAL_MOVIES_DB:
             if clean_q in clean_title(movie["title"]) or any(word in clean_title(movie["title"]) for word in clean_q.split()):
                 found_film = movie
                 break
-
-    if api_failed and mode == "auto":
-        await message.answer(
-            "⚠️ **Автодиагностика KINOrave:**\n"
-            "Глобальный API временно недоступен. Поиск автоматически переведен на **локальный резерв G-CON**.\n"
-            "📁 *Показан результат из защищенной локальной базы.*",
-            parse_mode="Markdown"
-        )
 
     if not found_film:
         await message.answer("😔 Ничего не найдено. Проверьте правильность написания названия фильма!")
@@ -508,7 +522,11 @@ async def text_search(message: types.Message):
         f"{found_film['desc']}"
     )
     kb = get_movie_kb(found_film['title'], found_film['id'])
-    await message.answer(caption, reply_markup=kb, parse_mode="Markdown")
+    
+    try:
+        await message.answer_photo(photo=found_film['poster'], caption=caption, reply_markup=kb, parse_mode="Markdown")
+    except Exception:
+        await message.answer(caption, reply_markup=kb, parse_mode="Markdown")
 
 @dp.inline_query()
 async def inline_search(query: InlineQuery):
@@ -563,7 +581,10 @@ async def callbacks(callback: types.CallbackQuery):
         rand_movie = random.choice(LOCAL_MOVIES_DB)
         caption = f"🎬 **{rand_movie['title']}** ({rand_movie['year']})\n⭐ Кинопоиск: {rand_movie['rating']}\n\n{rand_movie['desc']}"
         kb = get_movie_kb(rand_movie['title'], rand_movie['id'])
-        await callback.message.answer(caption, reply_markup=kb, parse_mode="Markdown")
+        try:
+            await callback.message.answer_photo(photo=rand_movie['poster'], caption=caption, reply_markup=kb, parse_mode="Markdown")
+        except Exception:
+            await callback.message.answer(caption, reply_markup=kb, parse_mode="Markdown")
     elif d in ["episodes", "next_item", "voice", "quality", "notify", "fav", "tv", "more", "history"]:
         await callback.answer("⚙️ Функция активна!", show_alert=True)
     elif d == "open_settings":
