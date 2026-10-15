@@ -6,20 +6,15 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
-# Включаем логирование, чтобы видеть всё, что происходит
 logging.basicConfig(level=logging.INFO)
 
-# Твои ключи
-BOT_TOKEN = "8410105070:AAHUuktDtUm_ICmRiRx
-0HghwsNkfYcNYD0Y"
+BOT_TOKEN = "8410105070:AAHUuktDtUm_ICmRiRx0HghwsNkfYcNYD0Y"
 TMDB_API_KEY = "e2d7e4ba3b610d32bb5826f04d026bd6"
 
-# Получаем внешний URL от Render автоматически
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 WEBHOOK_PATH = f"/bot/{BOT_TOKEN}"
 WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
 
-# Порт для Render (по умолчанию 10000)
 PORT = int(os.environ.get("PORT", 10000))
 
 bot = Bot(token=BOT_TOKEN)
@@ -80,7 +75,6 @@ async def search_movie(message: types.Message):
         await message.answer("Произошла ошибка при поиске фильма. Попробуй позже!")
 
 async def on_startup(bot: Bot):
-    # Устанавливаем вебхук при старте
     try:
         await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
         logging.info(f"Вебхук успешно установлен: {WEBHOOK_URL}")
@@ -90,7 +84,6 @@ async def on_startup(bot: Bot):
 def main():
     app = web.Application()
     
-    # Настраиваем обработчик запросов от Telegram
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
@@ -100,7 +93,6 @@ def main():
     dp.startup.register(on_startup)
     setup_application(app, dp, bot=bot)
     
-    # Запускаем веб-сервер, который мгновенно занимает порт и держит сервис живым
     web.run_app(app, host="0.0.0.0", port=PORT)
 
 if __name__ == "__main__":
