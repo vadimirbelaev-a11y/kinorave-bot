@@ -11,20 +11,15 @@ from aiogram.types import (
 )
 import yt_dlp
 
-# Импортируем функции базы данных
 from database import (
     init_db, db_add_user, check_vip_status_expiration, 
     db_get_user_info, db_set_user_vip_months, db_get_stats, 
     db_get_all_users, get_maintenance_mode, set_maintenance_mode
 )
 
-# Инициализируем базу при запуске
 init_db()
-
-# Настройка логов
 logging.basicConfig(level=logging.INFO)
 
-# ТОКЕН И НАСТРОЙКИ
 BOT_TOKEN = "8945702554:AAGxV9zRNvf_iX17bh1GzHZLqh_wDap6lvE"
 ADMIN_ID = 6444735646
 BOT_USERNAME = "pulsefetch_bot"
@@ -32,7 +27,6 @@ BOT_USERNAME = "pulsefetch_bot"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- КЛАВИАТУРЫ ---
 def get_main_keyboard(is_vip: int):
     vip_label = "🌟 VIP Статус (Активен)" if is_vip == 1 else "💎 Купить VIP (Без рекламы и 4K)"
     keyboard = ReplyKeyboardMarkup(
@@ -61,7 +55,6 @@ def get_admin_keyboard():
 
 waiting_for_broadcast = set()
 
-# Команда /start
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
     args = message.text.split()
@@ -76,7 +69,7 @@ async def cmd_start(message: types.Message):
     
     if referrer_id and referrer_id != message.from_user.id:
         try:
-            await bot.send_message(referrer_id, f"🎉 По твоей ссылке перешел новый друг! Пригласи еще, чтобы получить 24 часа ВИП.")
+            await bot.send_message(referrer_id, f"🎉 По твоей ссылке перешел новый друг! Пригласи еще для получения 24 часов VIP.")
         except:
             pass
 
@@ -108,18 +101,18 @@ async def referral_menu(message: types.Message):
     needed_for_next = 3 - current_cycle_refs
     
     if claimed >= 3:
-        status_text = "🔥 **Ты полностью исчерпал все 3 бонусных активации!** Спасибо за активность!"
+        status_text = "🔥 **Ты полностью исчерпал все 3 бонусных активации по 24 часа!**"
     else:
         status_text = (
             f"📊 **Твоя статистика приглашений:**\n"
             f"• Приглашено друзей: `{refs}`\n"
-            f"• Получено бонусов: `{claimed} из 3`\n\n"
+            f"• Получено бонусов (на 24 часа): `{claimed} из 3`\n\n"
             f"🎯 До следующих 24 часов VIP осталось пригласить: **{needed_for_next} друга(-ей)**"
         )
 
     text = (
-        f"🎁 **Получи VIP-статус бесплатно!**\n\n"
-        f"Приглашай друзей по своей ссылке. За каждые **3 друга** ты получаешь **24 часа VIP** (доступно до 3 раз)!\n\n"
+        f"🎁 **Получи VIP на 24 часа бесплатно!**\n\n"
+        f"Приглашай друзей по своей ссылке. За каждые **3 друга** тебе автоматически выдается **VIP на 24 часа** (до 3 раз)!\n\n"
         f"🔗 **Твоя реферальная ссылка:**\n`{ref_link}`\n\n"
         f"{status_text}"
     )
@@ -180,7 +173,6 @@ async def normal_menu(message: types.Message):
         is_vip = check_vip_status_expiration(message.from_user.id, ADMIN_ID)
         await message.answer("Перешли в обычное меню", reply_markup=get_main_keyboard(is_vip))
 
-# --- ФУНКЦИЯ СКАЧИВАНИЯ ---
 def download_media_with_ytdlp(url: str, base_filename: str, is_vip: int):
     if is_vip:
         video_format = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
@@ -209,10 +201,9 @@ def download_media_with_ytdlp(url: str, base_filename: str, is_vip: int):
     }
     with yt_dlp.YoutubeDL(ydl_opts_video) as ydl:
         ydl.download([url])
-    with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
+    with yt_dlp.YoutubeDL(yt_dlp.YoutubeDL(ydl_opts_audio) if False else ydl_opts_audio) as ydl:
         ydl.download([url])
 
-# --- ОБРАБОТЧИК ССЫЛОК И СООБЩЕНИЙ ---
 @dp.message(F.text)
 async def handle_text(message: types.Message):
     if message.from_user.id == ADMIN_ID and ADMIN_ID in waiting_for_broadcast:
@@ -247,7 +238,7 @@ async def handle_text(message: types.Message):
             "📺 **Реклама:**\n"
             "Хочешь скачивать видео в 2K/4K без водяных знаков и рекламы? Пригласи друзей или подключи VIP за звезды!\n\n"
             "⏳ *Обрабатываем твою ссылку...*",
-            reply_markup=ad_keyword,
+            reply_markup=ad_keyboard,
             parse_mode=ParseMode.MARKDOWN
         )
         await asyncio.sleep(2)
