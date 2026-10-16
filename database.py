@@ -17,7 +17,8 @@ def init_db():
             invited_by INTEGER,
             referral_count INTEGER DEFAULT 0,
             bonuses_claimed INTEGER DEFAULT 0,
-            joined_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            joined_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            language TEXT DEFAULT 'ru'
         )
     ''')
     cursor.execute('''
@@ -33,6 +34,13 @@ def init_db():
         )
     ''')
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('maintenance', 'off')")
+    
+    # Проверяем, есть ли колонка language в старой таблице, если нет — добавляем
+    cursor.execute("PRAGMA table_info(users)")
+    columns = [column[1] for column in cursor.fetchall()]
+    if 'language' not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'ru'")
+
     conn.commit()
     conn.close()
 
@@ -51,8 +59,8 @@ def db_add_user(user_id, username, first_name, referrer_id=None):
                 actual_referrer = referrer_id
 
         cursor.execute('''
-            INSERT INTO users (user_id, username, first_name, invited_by, vip_status) 
-            VALUES (?, ?, ?, ?, 0)
+            INSERT INTO users (user_id, username, first_name, invited_by, vip_status, language) 
+            VALUES (?, ?, ?, ?, 0, 'ru')
         ''', (user_id, username, first_name, actual_referrer))
         
         if actual_referrer:
@@ -66,11 +74,8 @@ def db_add_user(user_id, username, first_name, referrer_id=None):
                     current_refs, claimed = ref_data[0], ref_data[1]
                     earned_bonuses = current_refs // 3
                     
-                    # Если заслужил новый бонус и не превысил лимит в 3 активации (максимум 3 раза по 24 часа)
                     if earned_bonuses > claimed and claimed < 3:
                         cursor.execute('UPDATE users SET bonuses_claimed = bonuses_claimed + 1 WHERE user_id = ?', (actual_referrer,))
-                        
-                        # Даем строго 24 часа от текущего момента
                         new_exp = datetime.now() + timedelta(hours=24)
                         cursor.execute('UPDATE users SET vip_status = 1, vip_expires_at = ? WHERE user_id = ?', (new_exp.isoformat(), actual_referrer))
             except sqlite3.IntegrityError:
@@ -95,7 +100,6 @@ def check_vip_status_expiration(user_id, admin_id) -> int:
     vip_status, expires_at = res[0], res[1]
     if vip_status == 1 and expires_at:
         try:
-            # Проверяем, не истекли ли 24 часа или покупка
             if datetime.now() > datetime.fromisoformat(expires_at):
                 conn = sqlite3.connect(DB_NAME)
                 cursor = conn.cursor()
@@ -123,6 +127,39 @@ def db_set_user_vip_months(user_id, months=1):
     cursor.execute('UPDATE users SET vip_status = 1, vip_expires_at = ? WHERE user_id = ?', (new_exp.isoformat(), user_id))
     conn.commit()
     conn.close()
+
+# --- Новые функции для работы с языком (чтобы бот не падал) ---
+def db_get_user_language(user_id: int) -> str:
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('SELECT language FROM users WHERE user_id = ?', (user_id,))
+    res = cursor.fetchone()
+    conn.close()
+    if res and res[0]:
+        return res[0]
+    return 'ru'
+
+def db_set_user_language(user_id: int, lang: str):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('UPDATE users SET language = ? WHERE user_id = ?', (lang, user_id))
+    conn.commit()
+    conn.close()
+
+def db_get_user_reg_date(user_id: int) -> str:
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('SELECT joined_date FROM users WHERE user_id = ?', (user_id,))
+    res = cursor.fetchone()
+    conn.close()
+    if res and res[0]:
+        try:
+            dt = datetime.fromisoformat(res[0])
+            return dt.strftime('%d.%m.%Y')
+        except:
+            return str(res[0])[:10]
+    return "Неизвестно"
+# -------------------------------------------------------------
 
 def db_get_stats():
     conn = sqlite3.connect(DB_NAME)
