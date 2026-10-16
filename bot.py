@@ -65,7 +65,6 @@ GROUP_HOSTS = (
     "twitch.tv", "vimeo.com", "dailymotion.com", "threads.net", "soundcloud.com",
 )
 
-# Актуальный User-Agent (Chrome 141)
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -82,7 +81,6 @@ HEADERS = {
     "Sec-Fetch-Dest": "document",
 }
 
-# Более надёжный набор клиентов для YouTube
 YT_CLIENTS = ["ios", "mweb", "android", "web_safari", "tv", "web"]
 
 VIDEO_EXT = (".mp4", ".mkv", ".webm", ".mov", ".m4v")
@@ -255,6 +253,7 @@ def _ydl_opts(
         opts["extractor_args"] = {
             "youtube": {
                 "player_client": YT_CLIENTS,
+                "player_skip": ["configs"],
             }
         }
 
@@ -277,14 +276,22 @@ def _download_sync(url: str, tmp: Path, fmt: str, cancel: threading.Event, limit
     is_tiktok = any(h in low for h in ("tiktok.com", "vt.tiktok.com", "vm.tiktok.com"))
     is_youtube = any(h in low for h in ("youtube.com", "youtu.be"))
 
-    strategies = [
-        {"use_clients": is_youtube, "use_cookies": True,  "impersonate": "chrome"},
-        {"use_clients": is_youtube, "use_cookies": False, "impersonate": "chrome"},
-        {"use_clients": True,       "use_cookies": True,  "impersonate": False},
-        {"use_clients": True,       "use_cookies": False, "impersonate": False},
-        {"use_clients": False,      "use_cookies": True,  "impersonate": False},
-        {"use_clients": False,      "use_cookies": False, "impersonate": False},
-    ]
+    if is_youtube:
+        strategies = [
+            {"use_clients": True,  "use_cookies": True,  "impersonate": False, "clients": ["ios", "mweb", "android"]},
+            {"use_clients": True,  "use_cookies": False, "impersonate": False, "clients": ["ios", "mweb", "android"]},
+            {"use_clients": True,  "use_cookies": True,  "impersonate": False, "clients": ["web_safari", "tv", "web"]},
+            {"use_clients": True,  "use_cookies": False, "impersonate": False, "clients": ["web_safari", "tv", "web"]},
+            {"use_clients": False, "use_cookies": True,  "impersonate": False, "clients": None},
+            {"use_clients": False, "use_cookies": False, "impersonate": False, "clients": None},
+        ]
+    else:
+        strategies = [
+            {"use_clients": False, "use_cookies": True,  "impersonate": "chrome", "clients": None},
+            {"use_clients": False, "use_cookies": False, "impersonate": "chrome", "clients": None},
+            {"use_clients": False, "use_cookies": True,  "impersonate": False, "clients": None},
+            {"use_clients": False, "use_cookies": False, "impersonate": False, "clients": None},
+        ]
 
     extra_headers = None
     if is_tiktok:
@@ -294,7 +301,11 @@ def _download_sync(url: str, tmp: Path, fmt: str, cancel: threading.Event, limit
         }
 
     for strat in strategies:
+        original_clients = YT_CLIENTS[:]
         try:
+            if strat.get("clients"):
+                globals()["YT_CLIENTS"] = strat["clients"]
+
             opts = _ydl_opts(
                 tmp, fmt, cancel,
                 use_clients=strat["use_clients"],
@@ -306,6 +317,8 @@ def _download_sync(url: str, tmp: Path, fmt: str, cancel: threading.Event, limit
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
 
+            globals()["YT_CLIENTS"] = original_clients
+
             if info and "entries" in info:
                 entries = [e for e in (info.get("entries") or []) if e]
                 info = entries[0] if entries else None
@@ -315,9 +328,10 @@ def _download_sync(url: str, tmp: Path, fmt: str, cancel: threading.Event, limit
             raise
         except Exception as e:
             last_err = e
+            globals()["YT_CLIENTS"] = original_clients
             log.warning(
                 "yt-dlp failed (clients=%s cookies=%s impersonate=%s): %s",
-                strat["use_clients"],
+                strat.get("clients") or strat["use_clients"],
                 strat["use_cookies"],
                 strat["impersonate"],
                 str(e)[:350],
@@ -367,25 +381,58 @@ async def _probe(path: Path) -> Optional[dict]:
             "w": int(v.get("width") or 0), "h": int(v.get("height") or 0), "dur": dur}
 
 
-async def _normalize(src: Path, tmp: Path, max_h: int) -> Path:
+async def _normalize(src: Path, tmp: Path, max_h: int, add_watermark: bool = False) -> Path:
     info = await _probe(src)
     if not info:
         raise MediaError("в файле нет видеопотока")
     out = tmp / "final.mp4"
     need_scale = bool(max_h) and info["h"] > max_h
-    ok = False
-    if info["vcodec"] == "h264" and info["acodec"] in (None, "aac") and not need_scale:
+
+    # Базовый видеофильтр
+    vf_parts = []
+    if need_scale:
+        vf_parts.append(f"scale=-2:{max_h}")
+    else:
+        vf_parts.append("scale=trunc(iw/2)*2:trunc(ih/2)*2")
+
+    # Водяной знак только для бесплатных пользователей
+    if add_watermark:
+        # Текст по центру с полупрозрачным фоном
+        watermark_text = f"Скачано с помощью бота @{BOT_USERNAME}"
+        drawtext = (
+            f"drawtext=text='{watermark_text}':"
+            f"fontsize=28:fontcolor=white:"
+            f"x=(w-text_w)/2:y=(h-text_h)/2:"
+            f"box=1:boxcolor=black@0.45:boxborderw=10"
+        )
+        vf_parts.append(drawtext)
+
+    vf = ",".join(vf_parts)
+
+    # Если можно просто скопировать и водяной знак не нужен
+    if (info["vcodec"] == "h264" and info["acodec"] in (None, "aac") 
+            and not need_scale and not add_watermark):
         rc, _, _ = await _run("ffmpeg", "-y", "-v", "error", "-i", str(src), "-c", "copy",
                               "-movflags", "+faststart", str(out), timeout=FFMPEG_TIMEOUT)
-        ok = rc == 0 and out.exists() and out.stat().st_size > 0
-    if not ok:
-        vf = f"scale=-2:{max_h}" if need_scale else "scale=trunc(iw/2)*2:trunc(ih/2)*2"
-        rc, _, err = await _run("ffmpeg", "-y", "-v", "error", "-i", str(src), "-vf", vf,
-                                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-                                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
-                                "-movflags", "+faststart", str(out), timeout=FFMPEG_TIMEOUT)
-        if rc != 0 or not out.exists() or out.stat().st_size == 0:
-            raise MediaError("ffmpeg: " + err.decode(errors="ignore")[-200:])
+        if rc == 0 and out.exists() and out.stat().st_size > 0:
+            if src != out:
+                src.unlink(missing_ok=True)
+            return out
+
+    # Перекодирование с водяным знаком / масштабированием
+    rc, _, err = await _run(
+        "ffmpeg", "-y", "-v", "error", "-i", str(src),
+        "-vf", vf,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart",
+        str(out),
+        timeout=FFMPEG_TIMEOUT
+    )
+    if rc != 0 or not out.exists() or out.stat().st_size == 0:
+        raise MediaError("ffmpeg: " + err.decode(errors="ignore")[-200:])
+
     if src != out:
         src.unlink(missing_ok=True)
     return out
@@ -425,7 +472,7 @@ async def _dl(url: str, tmp: Path, fmt: str, cancel: threading.Event, limit: int
 
 
 async def fetch_media(url: str, heights: list, want_video: bool, want_audio: bool,
-                      limit: int) -> Result:
+                      limit: int, add_watermark: bool = False) -> Result:
     tmp = Path(await asyncio.to_thread(tempfile.mkdtemp, prefix="pf_"))
     res = Result(tmpdir=tmp)
     cancel = threading.Event()
@@ -439,7 +486,7 @@ async def fetch_media(url: str, heights: list, want_video: bool, want_audio: boo
                     src = _find_file(tmp, VIDEO_EXT)
                     if not src:
                         raise MediaError("слишком большой файл")
-                    final = await _normalize(src, tmp, h)
+                    final = await _normalize(src, tmp, h, add_watermark=add_watermark)
                     size = final.stat().st_size
                     if size <= 0:
                         raise MediaError("пустой файл")
@@ -544,10 +591,14 @@ async def job(bot: Bot, chat_id: int, user_id: int, url: str, action: str, is_vi
     try:
         async with DL_SEM:
             async with ChatActionSender.upload_video(bot=bot, chat_id=chat_id):
+                # Водяной знак только для бесплатных пользователей
+                add_wm = not is_vip
                 res = await fetch_media(
                     url, VIP_HEIGHTS if is_vip else FREE_HEIGHTS,
                     action in ("video", "both"), action in ("audio", "both"),
-                    limit_mb * 1024 * 1024)
+                    limit_mb * 1024 * 1024,
+                    add_watermark=add_wm
+                )
                 q = f" {res.height}p" if res.height else ""
                 if res.video:
                     cap = f"🌟 <b>VIP Видео{q}</b>" if is_vip else f"🎥 <b>Видео{q}</b>{tail}"
@@ -577,11 +628,12 @@ def get_vip_comparison_text() -> str:
         "👤 <b>Обычный тариф (Бесплатно):</b>\n"
         f"• 📁 Максимальный размер файла: <b>до {fmt_limit(FREE_LIMIT_MB)}</b>\n"
         "• 🎬 Качество видео: <b>до 720p</b>\n"
-        "• 🏷 Водяные знаки платформы: <b>сохраняются как в оригинале</b>\n\n"
+        "• 🏷 Водяной знак бота: <b>есть</b>\n\n"
         "🌟 <b>VIP Подписка:</b>\n"
         f"• 📁 Максимальный размер файла: <b>до {fmt_limit(VIP_LIMIT_MB)}</b>\n"
         "• 🎬 Качество видео: <b>максимальное (1080p и выше, если доступно)</b>\n"
-        "• 🎵 Выгрузка аудиодорожек (MP3) в высоком качестве\n\n"
+        "• 🎵 Выгрузка аудиодорожек (MP3) в высоком качестве\n"
+        "• 🏷 Водяной знак бота: <b>отсутствует</b>\n\n"
         "💡 <i>Вы можете купить VIP за Telegram Stars или получить 24 часа бесплатно "
         "за приглашение 3 друзей!</i>"
     )
@@ -685,7 +737,7 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext,
             referrer_id, "🎉 По твоей ссылке перешел новый друг! Пригласи еще для получения 24 часов VIP."))
 
     is_vip = get_vip(uid)
-    tariff = (f"🌟 <b>VIP (До {fmt_limit(VIP_LIMIT_MB)}, 4K, Без рекламы)</b>" if is_vip
+    tariff = (f"🌟 <b>VIP (До {fmt_limit(VIP_LIMIT_MB)}, 4K, Без водяного знака)</b>" if is_vip
               else f"👤 <b>Обычный (До {fmt_limit(FREE_LIMIT_MB)}, 720p)</b>")
     await message.answer(
         f"👋 <b>Привет, {esc(message.from_user.first_name)}!</b>\n\n"
@@ -875,7 +927,7 @@ async def process_format_choice(callback: CallbackQuery, state: FSMContext, bot:
     if not is_vip and action != "audio":
         text = ("📺 <b>Обработка запроса...</b>\n"
                 f"📌 <i>Лимит обычного тарифа — до {fmt_limit(FREE_LIMIT_MB)} (качество 720p).</i>\n"
-                f"🌟 <i>Хочешь файлы до {fmt_limit(VIP_LIMIT_MB)} и максимум качества? Подключи VIP!</i>\n\n"
+                f"🌟 <i>Хочешь файлы до {fmt_limit(VIP_LIMIT_MB)} и без водяного знака? Подключи VIP!</i>\n\n"
                 "⏳ <i>Скачиваем файл...</i>")
     else:
         text = "🔄 <b>Загружаем медиа...</b> Подожди пару секунд."
@@ -901,7 +953,7 @@ async def buy_vip_command(message: Message, state: FSMContext):
     await state.clear()
     await message.answer_invoice(
         title="🌟 VIP-статус для PulseFetch",
-        description=f"Файлы до {fmt_limit(VIP_LIMIT_MB)}, максимальное качество и выгрузка MP3!",
+        description=f"Файлы до {fmt_limit(VIP_LIMIT_MB)}, максимальное качество, без водяного знака и MP3!",
         prices=[LabeledPrice(label="VIP Подписка (1 месяц)", amount=100)],
         payload="vip_subscription_30_days", currency="XTR", provider_token="")
     await message.answer(f"{get_vip_comparison_text()}\n\n"
@@ -916,7 +968,7 @@ async def successful_payment_handler(message: Message):
     await message.answer(
         "🎉 <b>Оплата прошла успешно!</b>\n\n"
         f"Тебе присвоен статус 🌟 <b>VIP</b> на 30 дней! Теперь тебе доступны файлы до "
-        f"{fmt_limit(VIP_LIMIT_MB)} и максимальное качество!",
+        f"{fmt_limit(VIP_LIMIT_MB)}, максимальное качество и <b>без водяного знака</b>!",
         reply_markup=get_main_keyboard(message.from_user.id, get_vip(message.from_user.id)))
 
 
@@ -979,7 +1031,7 @@ async def bot_added_to_group(event: ChatMemberUpdated, bot: Bot):
 @group_router.callback_query(F.data == "g:hint")
 async def group_hint(callback: CallbackQuery):
     await callback.answer("📎 Просто отправь ссылку на видео в этот чат — "
-                          "я сам её подхвачу и скачаю видео в качестве 720p с водяным знаком.", show_alert=True)
+                          "я сам её подхвачу и скачаю видео в качестве 720p.", show_alert=True)
 
 
 @group_router.message(CommandStart(), F.chat.type.in_(GROUPS))
