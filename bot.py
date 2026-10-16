@@ -46,20 +46,18 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatType, ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
-from aiogram.filters import CommandObject, CommandStart, JOIN_TRANSITION, ChatMemberUpdatedFilter
+from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import (CallbackQuery, ChatMemberUpdated, FSInputFile,
+from aiogram.types import (CallbackQuery, FSInputFile,
                            InlineKeyboardButton, InlineKeyboardMarkup,
-                           KeyboardButton, LabeledPrice, Message,
-                           PreCheckoutQuery, ReplyKeyboardMarkup, ReplyParameters)
+                           Message, PreCheckoutQuery, ReplyParameters)
 from aiogram.utils.chat_action import ChatActionSender
 
 from database import (
     init_db, db_add_user, check_vip_status_expiration,
-    db_get_user_info, db_set_user_vip_months, db_get_stats,
-    db_get_all_users, get_maintenance_mode, set_maintenance_mode,
+    db_get_user_info, db_get_all_users,
     db_get_user_language, db_set_user_language, db_get_user_reg_date
 )
 
@@ -69,7 +67,6 @@ if not BOT_TOKEN:
 
 ADMIN_ID = 6444735646
 BOT_USERNAME = os.getenv("BOT_USERNAME", "pulsefetch_bot")
-COOKIES_FILE = os.getenv("COOKIES_FILE", "cookies.txt")
 PROXY_URL = os.getenv("PROXY_URL", "").strip()
 LOCAL_API_URL = os.getenv("LOCAL_API_URL", "")
 
@@ -112,13 +109,11 @@ LANGS = {
         "download": "📥 Скачать медиа",
         "profile": "👤 Мой профиль",
         "vip_active": "🌟 VIP Статус (Активен)",
-        "vip_buy": "💎 Купить VIP (Без водяного знака)",
-        "ref": "🎁 Бесплатный VIP за друзей",
-        "restart": "🔄 Перезапустить бота",
+        "vip_buy": "💎 Купить VIP",
+        "ref": "🎁 Рефералы",
         "settings": "⚙️ Настройки",
-        "about": "ℹ️ О боте и правилах",
-        "admin": "👑 Админ-панель",
-        "welcome": "👋 <b>Привет, {name}!</b>\n\nЯ универсальный бот <b>PulseFetch</b>.\n\n📌 <b>Твой тариф:</b> {tariff}\n\n👇 Нажми кнопку ниже:",
+        "about": "ℹ️ О боте",
+        "welcome": "👋 <b>Привет, {name}!</b>\n\nЯ универсальный бот <b>PulseFetch</b>.\n\n📌 <b>Твой тариф:</b> {tariff}\n\n👇 Выбери действие ниже:",
         "choose_platform": "📂 <b>Шаг 1 из 2:</b> Выбери платформу:",
         "settings_title": "⚙️ <b>Настройки бота</b>\n\nВыбери язык интерфейса:",
         "lang_changed": "✅ Язык успешно изменен на Русский!",
@@ -128,13 +123,11 @@ LANGS = {
         "download": "📥 Завантажити медіа",
         "profile": "👤 Мій профіль",
         "vip_active": "🌟 VIP Статус (Активний)",
-        "vip_buy": "💎 Купити VIP (Без водяного знаку)",
-        "ref": "🎁 Безкоштовний VIP за друзів",
-        "restart": "🔄 Перезапустити бота",
+        "vip_buy": "💎 Купити VIP",
+        "ref": "🎁 Реферали",
         "settings": "⚙️ Налаштування",
-        "about": "ℹ️ Про бота та правила",
-        "admin": "👑 Адмін-панель",
-        "welcome": "👋 <b>Привіт, {name}!</b>\n\nЯ універсальний бот <b>PulseFetch</b>.\n\n📌 <b>Твій тариф:</b> {tariff}\n\n👇 Натисни кнопку нижче:",
+        "about": "ℹ️ Про бота",
+        "welcome": "👋 <b>Привіт, {name}!</b>\n\nЯ універсальний бот <b>PulseFetch</b>.\n\n📌 <b>Твій тариф:</b> {tariff}\n\n👇 Вибери дію нижче:",
         "choose_platform": "📂 <b>Крок 1 із 2:</b> Вибери платформу:",
         "settings_title": "⚙️ <b>Налаштування бота</b>\n\nВибери мову інтерфейсу:",
         "lang_changed": "✅ Мову успішно змінено на Українську!",
@@ -204,15 +197,6 @@ def host_supported(url: str) -> bool:
     host = m.group(1).lower()
     return any(host == h or host.endswith("." + h) for h in GROUP_HOSTS)
 
-def all_user_ids() -> list:
-    ids = []
-    for r in db_get_all_users() or []:
-        try:
-            ids.append(int(r[0]) if isinstance(r, (tuple, list)) else int(r))
-        except (TypeError, ValueError, IndexError):
-            continue
-    return ids
-
 def get_vip(user_id: int) -> bool:
     try:
         return bool(check_vip_status_expiration(user_id, ADMIN_ID))
@@ -221,9 +205,12 @@ def get_vip(user_id: int) -> bool:
 
 async def safe_exit(msg, text: str, markup=None):
     try:
-        await msg.edit_text(text, reply_markup=markup)
+        await msg.edit_text(text, reply_markup=markup, parse_mode=ParseMode.HTML)
     except Exception:
-        pass
+        try:
+            await msg.answer(text, reply_markup=markup, parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
 # ===== 2. УСИЛЕННЫЙ МОДУЛЬ СКАЧИВАНИЯ =====
 class MediaError(Exception):
     pass
@@ -294,10 +281,14 @@ def _ydl_opts(tmp: Path, fmt: str, cancel: threading.Event, use_clients: bool, l
         }
 
     if use_cookies:
-        if COOKIES_FILE and Path(COOKIES_FILE).is_file():
-            opts["cookiefile"] = COOKIES_FILE
-        elif Path("cookies.txt").is_file():
-            opts["cookiefile"] = "cookies.txt"
+        base_dir = Path(__file__).resolve().parent
+        cookie_path = base_dir / "cookies.txt"
+        if cookie_path.is_file():
+            opts["cookiefile"] = str(cookie_path)
+        else:
+            alt_path = Path("cookies.txt")
+            if alt_path.is_file():
+                opts["cookiefile"] = str(alt_path.resolve())
 
     if impersonate:
         opts["impersonate"] = impersonate
@@ -493,10 +484,6 @@ def _clear(tmp: Path):
         if f.is_file():
             f.unlink(missing_ok=True)
 
-def _retryable(e: Exception) -> bool:
-    s = str(e).lower()
-    return any(k in s for k in ("requested format", "ffmpeg", "слишком большой", "нет видеопотока"))
-
 async def fetch_media(url: str, heights: list, want_video: bool, want_audio: bool, limit: int, add_watermark: bool = False) -> Result:
     tmp = Path(await asyncio.to_thread(tempfile.mkdtemp, prefix="pf_"))
     res = Result(tmpdir=tmp)
@@ -557,7 +544,7 @@ def friendly_error(e: Exception, limit_mb: int) -> str:
     if "слишком большой" in s:
         return f"📦 Файл слишком большой для отправки (лимит {fmt_limit(limit_mb)})."
     if any(k in s for k in ("private", "login", "sign in", "cookies", "age", "authentication", "bot")):
-        return "🔒 YouTube заблокировал IP дата-центра Render. Добавь PROXY_URL в настройки Render."
+        return "🔒 YouTube заблокировал IP дата-центра Render. Проверь cookies.txt."
     if any(k in s for k in ("unsupported url", "no video")):
         return "🤷 В этой ссылке не нашлось медиа."
     return "❌ Не удалось скачать медиа. Проверьте ссылку."
@@ -615,45 +602,41 @@ async def job(bot: Bot, chat_id: int, user_id: int, url: str, action: str, is_vi
             shutil.rmtree(res.tmpdir, ignore_errors=True)
         if status:
             await quiet(status.delete())
-# ===== 3. ИНТЕРФЕЙС И КЛАВИАТУРЫ =====
-def get_vip_comparison_text() -> str:
-    return "⚡️ <b>ТАРИФЫ</b>\n\n👤 Обычный: до 500 МБ, 720p, с водяным знаком.\n🌟 VIP: до 2 ГБ, 1080p+, MP3, без знака."
-
-def get_main_keyboard(user_id: int, is_vip: bool) -> ReplyKeyboardMarkup:
-    vip_label = t(user_id, "vip_active") if is_vip else t(user_id, "vip_buy")
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text=t(user_id, "download")), KeyboardButton(text=t(user_id, "profile"))],
-        [KeyboardButton(text=vip_label)],
-        [KeyboardButton(text=t(user_id, "ref")), KeyboardButton(text=t(user_id, "restart"))],
-        [KeyboardButton(text=t(user_id, "settings")), KeyboardButton(text=t(user_id, "about"))],
-    ], resize_keyboard=True)
+# ===== 3. ИНЛАЙН-ИНТЕРФЕЙС И РОУТЫ =====
+def get_main_inline_keyboard(user_id: int, is_vip: bool) -> InlineKeyboardMarkup:
+    vip_text = "🌟 VIP Статус" if is_vip else "💎 Купить VIP"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📥 Скачать медиа", callback_data="menu_download"),
+         InlineKeyboardButton(text="👤 Мой профиль", callback_data="menu_profile")],
+        [InlineKeyboardButton(text=vip_text, callback_data="menu_vip")],
+        [InlineKeyboardButton(text="⚙️ Настройки", callback_data="menu_settings"),
+         InlineKeyboardButton(text="ℹ️ О боте", callback_data="menu_about")],
+    ])
 
 def get_restart_inline_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔄 Главное меню", callback_data="restart_bot")]])
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Главное меню", callback_data="restart_bot")]
+    ])
 
 def get_platforms_keyboard(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎵 TikTok", callback_data="platform_tiktok"), InlineKeyboardButton(text="📺 YouTube / Shorts", callback_data="platform_youtube")],
-        [InlineKeyboardButton(text="📸 Instagram", callback_data="platform_insta"), InlineKeyboardButton(text="🌐 Другие", callback_data="platform_other")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_action")],
+        [InlineKeyboardButton(text="🎵 TikTok", callback_data="platform_tiktok"),
+         InlineKeyboardButton(text="📺 YouTube / Shorts", callback_data="platform_youtube")],
+        [InlineKeyboardButton(text="📸 Instagram", callback_data="platform_insta"),
+         InlineKeyboardButton(text="🌐 Другие", callback_data="platform_other")],
+        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="restart_bot")],
     ])
 
 def get_languages_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru"), InlineKeyboardButton(text="🇺🇦 Українська", callback_data="lang_uk")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="restart_bot")]
+        [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru"),
+         InlineKeyboardButton(text="🇺🇦 Українська", callback_data="lang_uk")],
+        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="restart_bot")]
     ])
 
 class DownloadStates(StatesGroup):
     waiting_for_link = State()
     waiting_for_format = State()
-
-class AdminStates(StatesGroup):
-    waiting_for_broadcast = State()
-
-class MaintenanceMiddleware(BaseMiddleware):
-    async def __call__(self, handler, event, data):
-        return await handler(event, data)
 
 pay_router = Router(name="pay")
 @pay_router.pre_checkout_query()
@@ -670,54 +653,69 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext,
     uid = message.from_user.id
     db_add_user(uid, message.from_user.username, message.from_user.first_name, None)
     is_vip = get_vip(uid)
-    await message.answer(t(uid, "welcome", name=esc(message.from_user.first_name), tariff="🌟 VIP" if is_vip else "👤 Free"), reply_markup=get_main_keyboard(uid, is_vip))
-
-@private_router.message(F.text.in_({"🔄 Перезапустить бота", "🔄 Restart Bot", "🔄 Перезапустити бота"}))
-async def restart_button(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("🔄 Меню:", reply_markup=get_main_keyboard(message.from_user.id, get_vip(message.from_user.id)))
+    await message.answer(
+        t(uid, "welcome", name=esc(message.from_user.first_name), tariff="🌟 VIP" if is_vip else "👤 Free"),
+        reply_markup=get_main_inline_keyboard(uid, is_vip)
+    )
 
 @private_router.callback_query(F.data == "restart_bot")
 async def callback_restart(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer()
-    await safe_exit(callback.message, "⚡️ Главное меню:", get_main_keyboard(callback.from_user.id, get_vip(callback.from_user.id)))
+    uid = callback.from_user.id
+    is_vip = get_vip(uid)
+    await safe_exit(callback.message, t(uid, "welcome", name=esc(callback.from_user.first_name), tariff="🌟 VIP" if is_vip else "👤 Free"), get_main_inline_keyboard(uid, is_vip))
 
-@private_router.message(F.text.in_({"⚙️ Настройки", "⚙️ Settings", "⚙️ Налаштування"}))
-async def settings_handler(message: Message, state: FSMContext):
+@private_router.callback_query(F.data == "menu_settings")
+async def callback_settings(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await message.answer(t(message.from_user.id, "settings_title"), reply_markup=get_languages_keyboard())
+    await callback.answer()
+    await safe_exit(callback.message, t(callback.from_user.id, "settings_title"), get_languages_keyboard())
 
 @private_router.callback_query(F.data.startswith("lang_"))
 async def set_lang(callback: CallbackQuery, state: FSMContext):
     uid = callback.from_user.id
     db_set_user_language(uid, callback.data.replace("lang_", ""))
     await callback.answer(t(uid, "lang_changed"), show_alert=True)
-    await safe_exit(callback.message, "⚡️ Меню:", get_main_keyboard(uid, get_vip(uid)))
+    is_vip = get_vip(uid)
+    await safe_exit(callback.message, t(uid, "welcome", name=esc(callback.from_user.first_name), tariff="🌟 VIP" if is_vip else "👤 Free"), get_main_inline_keyboard(uid, is_vip))
 
-@private_router.message(F.text.in_({"👤 Мой профиль", "👤 My Profile", "👤 Мій профіль"}))
-async def profile_handler(message: Message, state: FSMContext):
+@private_router.callback_query(F.data == "menu_profile")
+async def callback_profile(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    uid = message.from_user.id
-    refs, claimed = db_get_user_info(uid)
-    await message.answer(t(uid, "profile_text", uid=uid, name=esc(message.from_user.first_name), tariff="🌟 VIP" if get_vip(uid) else "👤 Free", reg_date=db_get_user_reg_date(uid) or "Неизвестно", refs=refs, claimed=claimed), reply_markup=get_restart_inline_keyboard(uid))
-
-@private_router.message(F.text.in_({"📥 Скачать медиа", "📥 Download Media", "📥 Завантажити медіа"}))
-async def choose_platform(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer(t(message.from_user.id, "choose_platform"), reply_markup=get_platforms_keyboard(message.from_user.id))
-
-@private_router.callback_query(F.data == "back_to_platforms")
-async def back_platforms(callback: CallbackQuery):
     await callback.answer()
-    await safe_exit(callback.message, t(callback.from_user.id, "choose_platform"), get_platforms_keyboard(callback.from_user.id))
+    uid = callback.from_user.id
+    refs, claimed = db_get_user_info(uid)
+    await safe_exit(
+        callback.message,
+        t(uid, "profile_text", uid=uid, name=esc(callback.from_user.first_name), tariff="🌟 VIP" if get_vip(uid) else "👤 Free", reg_date=db_get_user_reg_date(uid) or "Неизвестно", refs=refs, claimed=claimed),
+        get_restart_inline_keyboard(uid)
+    )
+
+@private_router.callback_query(F.data == "menu_vip")
+async def callback_vip(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    uid = callback.from_user.id
+    await safe_exit(callback.message, "⚡️ <b>VIP Статус</b>\n\nДает возможность качать файлы до 2 ГБ без водяного знака.", get_restart_inline_keyboard(uid))
+
+@private_router.callback_query(F.data == "menu_about")
+async def callback_about(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    uid = callback.from_user.id
+    await safe_exit(callback.message, "ℹ️ <b>О боте PulseFetch</b>\n\nУниверсальный бот для скачивания видео и музыки из TikTok, YouTube, Instagram и других платформ.", get_restart_inline_keyboard(uid))
+
+@private_router.callback_query(F.data == "menu_download")
+async def callback_download(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    uid = callback.from_user.id
+    await safe_exit(callback.message, t(uid, "choose_platform"), get_platforms_keyboard(uid))
 
 @private_router.callback_query(F.data.startswith("platform_"))
 async def platform_choice(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.update_data(platform=callback.data.replace("platform_", ""))
     await state.set_state(DownloadStates.waiting_for_link)
-    await safe_exit(callback.message, "🔗 Отправь ссылку в чат:", InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_platforms")]]))
+    await safe_exit(callback.message, "🔗 Отправь ссылку в чат:", InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="menu_download")]]))
 
 @private_router.message(DownloadStates.waiting_for_link, F.text)
 async def link_received(message: Message, state: FSMContext):
@@ -731,7 +729,7 @@ async def link_received(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="🎬 Только видео", callback_data="fmt_video")],
         [InlineKeyboardButton(text="🎵 Только аудио (MP3)", callback_data="fmt_audio")],
         [InlineKeyboardButton(text="📦 Всё вместе", callback_data="fmt_both")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_action")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_download")],
     ]))
 
 @private_router.callback_query(DownloadStates.waiting_for_format, F.data.startswith("fmt_"))
@@ -748,18 +746,26 @@ async def format_choice(callback: CallbackQuery, state: FSMContext, bot: Bot):
     if not cooldown(uid, 3):
         await safe_exit(callback.message, "⏳ Подожди пару секунд.")
         return
-    await safe_exit(callback.message, "🔄 <b>Загружаем...</b>")
+    await safe_exit(callback.message, "🔄 <b>Загружаем... видео обрабатывается</b>")
     await job(bot, callback.message.chat.id, uid, url, action, get_vip(uid), markup=get_restart_inline_keyboard(uid), status=callback.message)
 
-@private_router.callback_query(F.data == "cancel_action")
-async def cancel_action(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.answer("Отменено")
-    await safe_exit(callback.message, "❌ Отменено.", get_main_keyboard(callback.from_user.id, get_vip(callback.from_user.id)))
-
 @private_router.message(F.text)
-async def fallback(message: Message):
-    await message.answer("ℹ️ Используй меню:", reply_markup=get_main_keyboard(message.from_user.id, get_vip(message.from_user.id)))
+async def fallback(message: Message, state: FSMContext):
+    uid = message.from_user.id
+    urls = extract_urls(message)
+    if urls:
+        # Если юзер просто кинул ссылку без меню — сразу переходим к выбору формата
+        await state.update_data(url=urls[0])
+        await state.set_state(DownloadStates.waiting_for_format)
+        await message.answer("📦 Выбери формат:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎬 Только видео", callback_data="fmt_video")],
+            [InlineKeyboardButton(text="🎵 Только аудио (MP3)", callback_data="fmt_audio")],
+            [InlineKeyboardButton(text="📦 Всё вместе", callback_data="fmt_both")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="restart_bot")],
+        ]))
+    else:
+        is_vip = get_vip(uid)
+        await message.answer("ℹ️ Главное меню:", reply_markup=get_main_inline_keyboard(uid, is_vip))
 # ===== 4. ГРУППЫ И ГЛАВНЫЙ ЦИКЛ MAIN =====
 group_router = Router(name="group")
 @group_router.message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}), F.text | F.caption)
@@ -792,8 +798,6 @@ async def main():
         BOT_USERNAME = me.username or BOT_USERNAME
 
         dp = Dispatcher(storage=MemoryStorage())
-        dp.message.outer_middleware(MaintenanceMiddleware())
-        dp.callback_query.outer_middleware(MaintenanceMiddleware())
         dp.include_routers(pay_router, private_router, group_router)
 
         await bot.delete_webhook(drop_pending_updates=True)
@@ -809,9 +813,10 @@ async def main():
                     async with aiohttp.ClientSession() as s:
                         async with s.get(base_url, timeout=15):
                             pass
+                    log.info("Self-ping successful")
                 except Exception:
                     pass
-                await asyncio.sleep(60)  # Стучимся каждую минуту (60 секунд), чтобы бот не засыпал
+                await asyncio.sleep(60)
 
         asyncio.create_task(self_ping())
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
