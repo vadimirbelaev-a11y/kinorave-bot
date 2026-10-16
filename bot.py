@@ -65,7 +65,7 @@ from database import (
     db_get_user_language, db_set_user_language, db_get_user_reg_date
 )
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8945702554:AAGxV9zRNvf_iX17bh1GzHZLqh_wDap6lvE")
+BOT_TOKEN = "8945702554:AAGxV9zRNvf_iX17bh1GzHZLqh_wDap6lvE"
 ADMIN_ID = 6444735646
 BOT_USERNAME = os.getenv("BOT_USERNAME", "pulsefetch_bot")
 COOKIES_FILE = os.getenv("COOKIES_FILE", "cookies.txt")
