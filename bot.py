@@ -158,6 +158,45 @@ async def about_bot_handler(message: types.Message, state: FSMContext):
     )
     await message.answer(info_text, reply_markup=get_restart_inline_keyboard(), parse_mode=ParseMode.MARKDOWN)
 
+# --- ПЕРСОНАЛЬНАЯ АДМИН-ПАНЕЛЬ (ВЫНЕСЕНА В НАЧАЛО ДЛЯ ТОЧНОГО СРАБАТЫВАНИЯ) ---
+@dp.message(F.text == "👑 Админ-панель")
+async def open_admin_panel(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await state.clear()
+    await message.answer("👑 **Панель администратора открыта:**", reply_markup=get_admin_panel_keyboard(), parse_mode=ParseMode.MARKDOWN)
+
+@dp.message(F.text == "⬅️ Выйти из админки")
+async def exit_admin_panel(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await state.clear()
+    is_vip = check_vip_status_expiration(message.from_user.id, ADMIN_ID)
+    await message.answer("Выход из админ-панели.", reply_markup=get_main_keyboard(message.from_user.id, is_vip))
+
+@dp.message(F.text == "📊 Статистика бота")
+async def admin_stats(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    total, vips = db_get_stats()
+    maint = "Включены 🔴" if get_maintenance_mode() == 'on' else "Выключены 🟢"
+    await message.answer(f"📊 **Статистика:**\n👥 Всего пользователей: `{total}`\n🌟 VIP пользователей: `{vips}`\n🛠 Тех. работы: {maint}", parse_mode=ParseMode.MARKDOWN)
+
+@dp.message(F.text.in_({"🟢 Выключить тех. работы", "🔴 Включить тех. работы"}))
+async def admin_toggle_maint(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    curr = get_maintenance_mode()
+    set_maintenance_mode('off' if curr == 'on' else 'on')
+    await message.answer("Состояние тех. работ изменено.", reply_markup=get_admin_panel_keyboard())
+
+@dp.message(F.text == "📢 Сделать рассылку")
+async def admin_broadcast(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    waiting_for_broadcast.add(ADMIN_ID)
+    await message.answer("✍️ Отправь текст для рассылки всем пользователям:")
+
 @dp.message(F.text == "📥 Скачать медиа")
 async def choose_platform_menu(message: types.Message, state: FSMContext):
     await state.clear()
@@ -385,6 +424,7 @@ async def cancel_action(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("Отменено")
     await callback.message.edit_text("❌ Действие отменено.")
 
+# Специально усиленный загрузчик с обходом ограничений YouTube и Shorts
 def download_selected_media_safe(url: str, base_filename: str, is_vip: int, action: str) -> bool:
     downloaded = False
     common_opts = {
@@ -393,9 +433,9 @@ def download_selected_media_safe(url: str, base_filename: str, is_vip: int, acti
         'no_warnings': True,
         'geo_bypass': True,
         'nocheckcertificate': True,
-        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+        'extractor_args': {'youtube': {'player_client': ['mweb', 'ios', 'web']}},
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
         }
     }
 
@@ -435,12 +475,11 @@ def download_selected_media_safe(url: str, base_filename: str, is_vip: int, acti
 
     return downloaded
 
-# --- УМНЫЙ АВТОСКАНЕР ДЛЯ ГРУПП (СРАБАТЫВАЕТ ТОЛЬКО НА ССЫЛКИ В ЧАТЕ) ---
+# Автосканер для групп и обработка текстовых сообщений
 @dp.message(F.text)
 async def handle_group_autoscanner_and_text(message: types.Message, state: FSMContext):
     text = message.text.strip()
     
-    # 1. Если это группа и в сообщении есть ссылка — активируем умный автосканер!
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if re.match(r'https?://[^\s]+', text):
             status_msg = await message.answer("🔄 **Автосканер:** обнаружил ссылку, скачиваю видео...", parse_mode=ParseMode.MARKDOWN)
@@ -472,9 +511,8 @@ async def handle_group_autoscanner_and_text(message: types.Message, state: FSMCo
                         os.remove(video_path)
                     except:
                         pass
-        return  # В группе больше на обычный текст бот не реагирует!
+        return
 
-    # 2. Логика для личных сообщений (рассылка админа и подсказки)
     if message.from_user.id == ADMIN_ID and ADMIN_ID in waiting_for_broadcast:
         waiting_for_broadcast.remove(ADMIN_ID)
         users = db_get_all_users()
@@ -494,45 +532,6 @@ async def handle_group_autoscanner_and_text(message: types.Message, state: FSMCo
         return
         
     await message.answer("ℹ️ Пожалуйста, используй кнопку **«📥 Скачать медиа»** в меню, чтобы начать процесс скачивания.", parse_mode=ParseMode.MARKDOWN)
-
-# Админ-панель
-@dp.message(F.text == "👑 Админ-панель")
-async def open_admin_panel(message: types.Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID:
-        return
-    await state.clear()
-    await message.answer("👑 **Панель администратора открыта:**", reply_markup=get_admin_panel_keyboard(), parse_mode=ParseMode.MARKDOWN)
-
-@dp.message(F.text == "⬅️ Выйти из админки")
-async def exit_admin_panel(message: types.Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID:
-        return
-    await state.clear()
-    is_vip = check_vip_status_expiration(message.from_user.id, ADMIN_ID)
-    await message.answer("Выход из админ-панели.", reply_markup=get_main_keyboard(message.from_user.id, is_vip))
-
-@dp.message(F.text == "📊 Статистика бота")
-async def admin_stats(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    total, vips = db_get_stats()
-    maint = "Включены 🔴" if get_maintenance_mode() == 'on' else "Выключены 🟢"
-    await message.answer(f"📊 **Статистика:**\n👥 Всего пользователей: `{total}`\n🌟 VIP пользователей: `{vips}`\n🛠 Тех. работы: {maint}", parse_mode=ParseMode.MARKDOWN)
-
-@dp.message(F.text.in_({"🟢 Выключить тех. работы", "🔴 Включить тех. работы"}))
-async def admin_toggle_maint(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    curr = get_maintenance_mode()
-    set_maintenance_mode('off' if curr == 'on' else 'on')
-    await message.answer("Состояние тех. работ изменено.", reply_markup=get_admin_panel_keyboard())
-
-@dp.message(F.text == "📢 Сделать рассылку")
-async def admin_broadcast(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    waiting_for_broadcast.add(ADMIN_ID)
-    await message.answer("✍️ Отправь текст для рассылки всем пользователям:")
 
 @dp.message(F.text == "🎁 Бесплатный VIP за друзей")
 async def referral_menu(message: types.Message, state: FSMContext):
