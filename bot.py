@@ -82,6 +82,24 @@ def get_restart_inline_keyboard():
 
 waiting_for_broadcast = set()
 
+# Красивое текстовое сравнение возможностей обычного тарифа и VIP
+def get_vip_comparison_text():
+    return (
+        "⚡️ **СРАВНЕНИЕ ТАРИФОВ И ВОЗМОЖНОСТЕЙ**\n\n"
+        "👤 **Обычный тариф (Бесплатно):**\n"
+        "• 📁 Максимальный размер файла: **до 500 МБ**\n"
+        "• 🎬 Качество видео: **до 720p**\n"
+        "• 🏷 Наличие водяных знаков / рекламы: **Да**\n"
+        "• ⚡️ Скорость обработки: **Стандартная**\n\n"
+        "🌟 **VIP Подписка:**\n"
+        "• 📁 Максимальный размер файла: **до 2 ГБ**\n"
+        "• 🎬 Качество видео: **Максимальное (1080p, 2K, 4K)**\n"
+        "• 🚫 Водяные знаки и реклама: **Полностью отсутствуют**\n"
+        "• ⚡️ Скорость обработки: **Приоритетная**\n"
+        "• 🎵 Выгрузка чистых аудиодорожек (MP3) высочайшего качества\n\n"
+        "💡 *Вы можете купить VIP за Telegram Stars или получить 24 часа бесплатно за приглашение 3 друзей!*"
+    )
+
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
@@ -115,7 +133,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     welcome_text = (
         f"👋 **Привет, {message.from_user.first_name}!**\n\n"
         f"Я универсальный бот **PulseFetch** для скачивания медиа.\n\n"
-        f"📌 **Твой тариф:** {'🌟 **VIP (Без рекламы, 4K)**' if is_vip else '👤 **Обычный (Качество 720p)**'}\n\n"
+        f"📌 **Твой текущий тариф:** {'🌟 **VIP (До 2 ГБ, 4K, Без рекламы)**' if is_vip else '👤 **Обычный (До 500 МБ, 720p)**'}\n\n"
         f"👇 Нажми кнопку **«📥 Скачать медиа»**, чтобы выбрать платформу!"
     )
     
@@ -150,15 +168,12 @@ async def about_bot_handler(message: types.Message, state: FSMContext):
 
     info_text = (
         f"🤖 **О боте PulseFetch:**\n\n"
-        f"Этот бот создан для быстрой и удобной загрузки видео и аудио из TikTok, YouTube, Instagram Reels и других платформ.\n\n"
-        f"📌 **Правила и условия:**\n"
-        f"• Максимальный размер файла — 50 МБ.\n"
-        f"• Получить VIP на 24 часа можно, пригласив 3 друзей (до 3 раз).\n\n"
-        f"⚡️ Нажми кнопку ниже, чтобы вернуться в меню:"
+        f"Бот создан для удобной и быстрой загрузки медиа из TikTok, YouTube, Instagram Reels и других платформ.\n\n"
+        f"{get_vip_comparison_text()}\n\n"
+        f"⚡️ Нажми кнопку ниже, чтобы вернуться в главная меню:"
     )
     await message.answer(info_text, reply_markup=get_restart_inline_keyboard(), parse_mode=ParseMode.MARKDOWN)
 
-# --- ПЕРСОНАЛЬНАЯ АДМИН-ПАНЕЛЬ (ВЫНЕСЕНА В НАЧАЛО ДЛЯ ТОЧНОГО СРАБАТЫВАНИЯ) ---
 @dp.message(F.text == "👑 Админ-панель")
 async def open_admin_panel(message: types.Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID:
@@ -350,8 +365,10 @@ async def process_format_choice(callback: types.CallbackQuery, state: FSMContext
 
     if not is_vip and action != "audio":
         await callback.message.edit_text(
-            "📺 **Обработка запроса...**\n\n"
-            "⏳ *Скачиваем медиа с учетом твоего тарифа...*",
+            "📺 **Обработка запроса...**\n"
+            "📌 *Лимит обычного тарифа — до 500 МБ (Качество 720p).*\n"
+            "🌟 *Хочешь скачивать файлы до 2 ГБ и в 4K? Подключи VIP!*\n\n"
+            "⏳ *Скачиваем файл...*",
             parse_mode=ParseMode.MARKDOWN
         )
     else:
@@ -366,7 +383,7 @@ async def process_format_choice(callback: types.CallbackQuery, state: FSMContext
         success = await loop.run_in_executor(None, download_selected_media_safe, url, base_name, is_vip, action)
 
         if not success:
-            await callback.message.answer("❌ Не удалось скачать медиа. Проверь правильность ссылки или попробуй другую платформу.", reply_markup=get_restart_inline_keyboard())
+            await callback.message.answer("❌ Не удалось скачать медиа. Возможно, файл превышает лимит по размеру (500 МБ для обычных / 2 ГБ для VIP).", reply_markup=get_restart_inline_keyboard())
             return
 
         has_video = os.path.exists(video_path) and os.path.getsize(video_path) > 0
@@ -392,10 +409,10 @@ async def process_format_choice(callback: types.CallbackQuery, state: FSMContext
             return
 
         if is_vip:
-            video_caption = "🌟 **VIP Видео (4K)**"
+            video_caption = "🌟 **VIP Видео (4K, до 2 ГБ)**"
             audio_caption = "🎵 **VIP Аудиодорожка**"
         else:
-            video_caption = f"🎥 **Видео (720p)**\n📥 Скачано через @{BOT_USERNAME}"
+            video_caption = f"🎥 **Видео (720p, до 500 МБ)**\n📥 Скачано через @{BOT_USERNAME}"
             audio_caption = f"🎵 **Аудиодорожка**\n📥 @{BOT_USERNAME}"
 
         if has_video and action in ["video", "both"]:
@@ -424,18 +441,34 @@ async def cancel_action(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("Отменено")
     await callback.message.edit_text("❌ Действие отменено.")
 
-# Специально усиленный загрузчик с обходом ограничений YouTube и Shorts
+# Функция скачивания с четкими лимитами: 500 МБ (без VIP) и 2 ГБ (для VIP)
 def download_selected_media_safe(url: str, base_filename: str, is_vip: int, action: str) -> bool:
     downloaded = False
+    
+    # Жесткое разграничение размера: 500 МБ для бесплатников, 2 ГБ (2000 МБ) для VIP
+    max_bytes = (2000 * 1024 * 1024) if is_vip else (500 * 1024 * 1024)
+    
     common_opts = {
         'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
         'geo_bypass': True,
         'nocheckcertificate': True,
-        'extractor_args': {'youtube': {'player_client': ['mweb', 'ios', 'web']}},
+        'socket_timeout': 60,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios', 'web'],
+                'skip': ['webpage', 'hls', 'dash']
+            },
+            'tiktok': {
+                'app_version': '30.2.0',
+            }
+        },
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Sec-Fetch-Mode': 'navigate',
         }
     }
 
@@ -445,12 +478,13 @@ def download_selected_media_safe(url: str, base_filename: str, is_vip: int, acti
             **common_opts,
             'format': video_format,
             'outtmpl': f"{base_filename}.mp4",
-            'max_filesize': 50 * 1024 * 1024,
+            'max_filesize': max_bytes,
         }
         try:
             with yt_dlp.YoutubeDL(ydl_opts_video) as ydl:
                 ydl.download([url])
-                downloaded = True
+                if os.path.exists(f"{base_filename}.mp4") and os.path.getsize(f"{base_filename}.mp4") > 0:
+                    downloaded = True
         except Exception as e:
             logging.error(f"Ошибка yt-dlp при скачивании видео: {e}")
 
@@ -459,7 +493,7 @@ def download_selected_media_safe(url: str, base_filename: str, is_vip: int, acti
             **common_opts,
             'format': 'bestaudio/best',
             'outtmpl': f"{base_filename}.%(ext)s",
-            'max_filesize': 50 * 1024 * 1024,
+            'max_filesize': max_bytes,
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -475,11 +509,24 @@ def download_selected_media_safe(url: str, base_filename: str, is_vip: int, acti
 
     return downloaded
 
-# Автосканер для групп и обработка текстовых сообщений
 @dp.message(F.text)
 async def handle_group_autoscanner_and_text(message: types.Message, state: FSMContext):
     text = message.text.strip()
     
+    if message.from_user.id == ADMIN_ID and ADMIN_ID in waiting_for_broadcast:
+        waiting_for_broadcast.remove(ADMIN_ID)
+        users = db_get_all_users()
+        success = 0
+        for uid in users:
+            try:
+                await message.copy_to(chat_id=uid)
+                success += 1
+                await asyncio.sleep(0.05)
+            except Exception as e:
+                logging.error(f"Не удалось отправить рассылку пользователю {uid}: {e}")
+        await message.answer(f"✅ Рассылка завершена. Успешно доставлено: {success}/{len(users)}")
+        return
+
     if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
         if re.match(r'https?://[^\s]+', text):
             status_msg = await message.answer("🔄 **Автосканер:** обнаружил ссылку, скачиваю видео...", parse_mode=ParseMode.MARKDOWN)
@@ -513,25 +560,39 @@ async def handle_group_autoscanner_and_text(message: types.Message, state: FSMCo
                         pass
         return
 
-    if message.from_user.id == ADMIN_ID and ADMIN_ID in waiting_for_broadcast:
-        waiting_for_broadcast.remove(ADMIN_ID)
-        users = db_get_all_users()
-        success = 0
-        for uid in users:
-            try:
-                await message.copy_to(chat_id=uid)
-                success += 1
-                await asyncio.sleep(0.05)
-            except:
-                pass
-        await message.answer(f"✅ Рассылка завершена. Успешно: {success}/{len(users)}")
-        return
-    
     if get_maintenance_mode() == 'on' and message.from_user.id != ADMIN_ID:
         await message.answer("🛠 В боте проводятся технические работы. Скоро вернемся!")
         return
         
     await message.answer("ℹ️ Пожалуйста, используй кнопку **«📥 Скачать медиа»** в меню, чтобы начать процесс скачивания.", parse_mode=ParseMode.MARKDOWN)
+
+@dp.message(F.text.startswith("💎 Купить VIP") | (F.text == "🌟 VIP Статус (Активен)"))
+async def buy_vip_command(message: types.Message, state: FSMContext):
+    await state.clear()
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        return
+
+    if get_maintenance_mode() == 'on' and message.from_user.id != ADMIN_ID:
+        await message.answer("🛠 В боте проводятся технические работы.")
+        return
+
+    is_vip = check_vip_status_expiration(message.from_user.id, ADMIN_ID)
+    
+    info_text = (
+        f"{get_vip_comparison_text()}\n\n"
+        f"💳 **Стоимость VIP подписки на 30 дней:** 100 Telegram Stars ✨"
+    )
+    
+    prices = [LabeledPrice(label="VIP Подписка (1 месяц)", amount=100)]
+    await message.answer_invoice(
+        title="🌟 VIP-статус для PulseFetch",
+        description="Размер файлов до 2 ГБ, 4K качество и отсутствие рекламы!",
+        prices=prices,
+        payload="vip_subscription_30_days",
+        currency="XTR",
+        provider_token=""
+    )
+    await message.answer(info_text, parse_mode=ParseMode.MARKDOWN)
 
 @dp.message(F.text == "🎁 Бесплатный VIP за друзей")
 async def referral_menu(message: types.Message, state: FSMContext):
@@ -568,26 +629,6 @@ async def referral_menu(message: types.Message, state: FSMContext):
     )
     await message.answer(text, reply_markup=get_restart_inline_keyboard(), parse_mode=ParseMode.MARKDOWN)
 
-@dp.message(F.text.startswith("💎 Купить VIP"))
-async def buy_vip_command(message: types.Message, state: FSMContext):
-    await state.clear()
-    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-        return
-
-    if get_maintenance_mode() == 'on' and message.from_user.id != ADMIN_ID:
-        await message.answer("🛠 В боте проводятся технические работы.")
-        return
-
-    prices = [LabeledPrice(label="VIP Подписка (1 месяц)", amount=100)]
-    await message.answer_invoice(
-        title="🌟 VIP-статус для PulseFetch",
-        description="Снятие водяных знаков, доступ к 2K/4K качеству и полное отключение рекламы на 30 дней!",
-        prices=prices,
-        payload="vip_subscription_30_days",
-        currency="XTR",
-        provider_token=""
-    )
-
 @dp.pre_checkout_query()
 async def pre_checkout_query_handler(pre_checkout_query: types.PreCheckoutQuery):
     await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
@@ -598,7 +639,7 @@ async def successful_payment_handler(message: types.Message):
     is_vip = check_vip_status_expiration(message.from_user.id, ADMIN_ID)
     await message.answer(
         "🎉 **Оплата прошла успешно!**\n\n"
-        "Тебе присвоен статус 🌟 **VIP** на 30 дней!",
+        "Тебе присвоен статус 🌟 **VIP** на 30 дней! Теперь тебе доступны файлы до 2 ГБ и максимальное качество!",
         reply_markup=get_main_keyboard(message.from_user.id, is_vip),
         parse_mode=ParseMode.MARKDOWN
     )
@@ -610,19 +651,6 @@ async def callback_restart(callback: types.CallbackQuery, state: FSMContext):
     is_vip = check_vip_status_expiration(callback.from_user.id, ADMIN_ID)
     restart_text = f"⚡️ **Главное меню PulseFetch**\n\n👇 Нажми кнопку **«📥 Скачать медиа»**:"
     await callback.message.answer(restart_text, reply_markup=get_main_keyboard(callback.from_user.id, is_vip), parse_mode=ParseMode.MARKDOWN)
-
-@dp.callback_query(F.data == "buy_vip_prompt")
-async def callback_buy_vip(callback: types.CallbackQuery):
-    await callback.answer()
-    prices = [LabeledPrice(label="VIP Подписка (1 месяц)", amount=100)]
-    await callback.message.answer_invoice(
-        title="🌟 VIP-статус для PulseFetch",
-        description="Снятие водяных знаков, доступ к 2K/4K качеству и полное отключение рекламы на 30 дней!",
-        prices=prices,
-        payload="vip_subscription_30_days",
-        currency="XTR",
-        provider_token=""
-    )
 
 async def main():
     await start_web_server()
