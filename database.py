@@ -2,11 +2,11 @@ import sqlite3
 from datetime import datetime, timedelta
 
 DB_NAME = 'bot_database.db'
+ADMIN_ID = 6444735646
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    # Таблица пользователей
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -20,14 +20,12 @@ def init_db():
             joined_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    # Таблица для защиты от накрутки рефералов
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS referrals (
             referrer_id INTEGER,
             referred_id INTEGER PRIMARY KEY
         )
     ''')
-    # Таблица настроек (тех. работы)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -67,25 +65,13 @@ def db_add_user(user_id, username, first_name, referrer_id=None):
                 if ref_data:
                     current_refs, claimed = ref_data[0], ref_data[1]
                     earned_bonuses = current_refs // 3
+                    
+                    # Если заслужил новый бонус и не превысил лимит в 3 активации (максимум 3 раза по 24 часа)
                     if earned_bonuses > claimed and claimed < 3:
                         cursor.execute('UPDATE users SET bonuses_claimed = bonuses_claimed + 1 WHERE user_id = ?', (actual_referrer,))
                         
-                        cursor.execute('SELECT vip_expires_at, vip_status FROM users WHERE user_id = ?', (actual_referrer,))
-                        v_row = cursor.fetchone()
-                        now = datetime.now()
-                        
-                        if v_row[1] == 1 and v_row[0]:
-                            try:
-                                exp_time = datetime.fromisoformat(v_row[0])
-                                if exp_time > now:
-                                    new_exp = exp_time + timedelta(hours=24)
-                                else:
-                                    new_exp = now + timedelta(hours=24)
-                            except:
-                                new_exp = now + timedelta(hours=24)
-                        else:
-                            new_exp = now + timedelta(hours=24)
-                            
+                        # Даем строго 24 часа от текущего момента
+                        new_exp = datetime.now() + timedelta(hours=24)
                         cursor.execute('UPDATE users SET vip_status = 1, vip_expires_at = ? WHERE user_id = ?', (new_exp.isoformat(), actual_referrer))
             except sqlite3.IntegrityError:
                 pass
@@ -95,7 +81,8 @@ def db_add_user(user_id, username, first_name, referrer_id=None):
 
 def check_vip_status_expiration(user_id, admin_id) -> int:
     if user_id == admin_id:
-        return 1
+        return 1  # Вечный VIP для админа
+    
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute('SELECT vip_status, vip_expires_at FROM users WHERE user_id = ?', (user_id,))
@@ -108,6 +95,7 @@ def check_vip_status_expiration(user_id, admin_id) -> int:
     vip_status, expires_at = res[0], res[1]
     if vip_status == 1 and expires_at:
         try:
+            # Проверяем, не истекли ли 24 часа или покупка
             if datetime.now() > datetime.fromisoformat(expires_at):
                 conn = sqlite3.connect(DB_NAME)
                 cursor = conn.cursor()
