@@ -1,4 +1,4 @@
-yt-dlp[default]>=2026.8.19
+yt-dlp[default]
 aiogram>=3.3.0
 aiohttp
 curl_cffi
