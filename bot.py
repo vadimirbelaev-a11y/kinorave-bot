@@ -181,7 +181,7 @@ LANGS = {
         "welcome": "👋 <b>Hallo, {name}!</b>\n\nIch bin <b>PulseFetch</b>.\n\n📌 <b>Aktueller Tarif:</b> {tariff}\n\n👇 Wähle eine Option:",
         "choose_platform": "📂 <b>Schritt 1 von 2:</b> Plattform wählen:",
         "settings_title": "⚙️ <b>Einstellungen</b>\n\nSprache auswählen:",
-        "lang_changed": "✅ Sprache erfolgreich auf Deutsch geändert!",
+        "lang_changed": "✅ Sprache erfolgreich на Deutsch geändert!",
         "profile_text": "👤 <b>Dein Profil:</b>\n\n🆔 ID: <code>{uid}</code>\n👤 Name: <b>{name}</b>\n🌟 Tarif: <b>{tariff}</b>\n📅 Registriert am: <b>{reg_date}</b>\n\n👥 Eingeladen: <b>{refs}</b>\n🎁 Boni: <b>{claimed} von 3</b>",
     },
     "pl": {
@@ -675,7 +675,7 @@ async def fetch_media(url: str, heights: list, want_video: bool, want_audio: boo
             res.audio = await _to_mp3(src, tmp, limit)
         return res
     except BaseException:
-        shutil.rmtree(res.tmpdir, ignore_errors=True)
+        shutil.rmtree(tmp, ignore_errors=True)
         raise
 
 def friendly_error(e: Exception, limit_mb: int) -> str:
@@ -1166,7 +1166,7 @@ async def start_web_server() -> web.AppRunner:
     await runner.setup()
     port = int(os.environ.get("PORT", 10000))
     await web.TCPSite(runner, "0.0.0.0", port).start()
-    log.info("Веб-сервер запущен на порту %s", port)
+    log.info("Веб-сервер мгновенно запущен на порту %s", port)
     return runner
 
 def cleanup_stale_tmp():
@@ -1181,14 +1181,17 @@ async def main():
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         raise SystemExit("ffmpeg/ffprobe не найдены в PATH")
 
+    # Мгновенно поднимаем веб-сервер для Render, чтобы порт открылся сразу
+    runner = await start_web_server()
+
     init_db()
     cleanup_stale_tmp()
-    runner = await start_web_server()
 
     if LOCAL_API_URL:
         session = AiohttpSession(api=TelegramAPIServer.from_base(LOCAL_API_URL), timeout=900)
     else:
         session = AiohttpSession(timeout=900)
+    
     bot = Bot(BOT_TOKEN, session=session, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     try:
         me = await bot.me()
