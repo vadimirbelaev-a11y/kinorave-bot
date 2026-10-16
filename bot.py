@@ -202,7 +202,13 @@ def build_format(h: int) -> str:
         return "bv*[vcodec^=avc1]+ba[acodec^=mp4a]/bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b"
     f = f"[height<=?{h}]"
     return (f"bv*{f}[vcodec^=avc1]+ba[acodec^=mp4a]/bv*{f}[ext=mp4]+ba[ext=m4a]/"
-            f"b{f}[ext=mp4]/bv*{f}+ba/b{f}")def _ydl_opts(
+            f"b{f}[ext=mp4]/bv*{f}+ba/b{f}")
+
+
+# ====================== КОНЕЦ ЧАСТИ 1 ======================
+# ====================== НАЧАЛО ЧАСТИ 2 ======================
+
+def _ydl_opts(
     tmp: Path,
     fmt: str,
     cancel: threading.Event,
@@ -271,7 +277,6 @@ def _download_sync(url: str, tmp: Path, fmt: str, cancel: threading.Event, limit
     is_tiktok = any(h in low for h in ("tiktok.com", "vt.tiktok.com", "vm.tiktok.com"))
     is_youtube = any(h in low for h in ("youtube.com", "youtu.be"))
 
-    # Несколько стратегий (порядок важен)
     strategies = [
         {"use_clients": is_youtube, "use_cookies": True,  "impersonate": "chrome"},
         {"use_clients": is_youtube, "use_cookies": False, "impersonate": "chrome"},
@@ -467,6 +472,11 @@ async def fetch_media(url: str, heights: list, want_video: bool, want_audio: boo
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
         raise
+
+
+# ====================== КОНЕЦ ЧАСТИ 2 ======================
+# ====================== НАЧАЛО ЧАСТИ 3 ======================
+
 def friendly_error(e: Exception, limit_mb: int) -> str:
     s = str(e).lower()
     if "слишком большой" in s:
@@ -749,7 +759,13 @@ async def admin_toggle_maint(message: Message, state: FSMContext):
 async def admin_broadcast(message: Message, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_broadcast)
     await message.answer("✍️ Отправь сообщение для рассылки всем пользователям "
-                         "(текст, фото, видео — любое).\nДля отмены нажми любую кнопку меню.")async def run_broadcast(bot: Bot, src_chat: int, src_msg: int):
+                         "(текст, фото, видео — любое).\nДля отмены нажми любую кнопку меню.")
+
+
+# ====================== КОНЕЦ ЧАСТИ 3 ======================
+# ====================== НАЧАЛО ЧАСТИ 4 ======================
+
+async def run_broadcast(bot: Bot, src_chat: int, src_msg: int):
     ids = all_user_ids()
     ok = 0
     for uid in ids:
