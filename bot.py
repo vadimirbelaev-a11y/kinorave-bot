@@ -41,7 +41,7 @@ from database import (
 )
 
 # ───────────────────────── КОНФИГ ─────────────────────────
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+BOT_TOKEN = "8945702554:AAGxV9zRNvf_iX17bh1GzHZLqh_wDap6lvE"
 ADMIN_ID = 6444735646
 BOT_USERNAME = os.getenv("BOT_USERNAME", "pulsefetch_bot")  # уточняется через getMe при запуске
 COOKIES_FILE = os.getenv("COOKIES_FILE", "")      # cookies.txt (Netscape) для Instagram/YouTube
