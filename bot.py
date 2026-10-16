@@ -5,7 +5,7 @@ import logging
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
-from aiogram.enums import ParseMode
+from aiogram.enums import ParseMode, ChatType
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -64,7 +64,7 @@ def get_main_keyboard(user_id: int, is_vip: int):
 
 def get_admin_panel_keyboard():
     is_maint = get_maintenance_mode()
-    maint_text = "🟢 Включить тех. работы" if is_maint == 'off' else "🔴 Выключить тех. работы"
+    maint_text = "🟢 Выключить тех. работы" if is_maint == 'on' else "🔴 Включить тех. работы"
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📊 Статистика бота")],
@@ -85,6 +85,15 @@ waiting_for_broadcast = set()
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
+    
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        await message.answer(f"👋 Привет! Я **PulseFetch** — бот для скачивания медиа. Просто отправь ссылку на видео в этот чат, и я скачаю его автоматически!", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    if get_maintenance_mode() == 'on' and message.from_user.id != ADMIN_ID:
+        await message.answer("🛠 В боте проводятся технические работы. Скоро вернемся!", parse_mode=ParseMode.MARKDOWN)
+        return
+
     args = message.text.split()
     referrer_id = None
     if len(args) > 1 and args[1].startswith("ref_"):
@@ -101,10 +110,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
         except:
             pass
 
-    if get_maintenance_mode() == 'on' and message.from_user.id != ADMIN_ID:
-        await message.answer("🛠 В боте проводятся технические работы. Скоро вернемся!", parse_mode=ParseMode.MARKDOWN)
-        return
-
     is_vip = check_vip_status_expiration(message.from_user.id, ADMIN_ID)
     
     welcome_text = (
@@ -119,6 +124,13 @@ async def cmd_start(message: types.Message, state: FSMContext):
 @dp.message(F.text == "🔄 Перезапустить бота")
 async def restart_button_handler(message: types.Message, state: FSMContext):
     await state.clear()
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        return
+
+    if get_maintenance_mode() == 'on' and message.from_user.id != ADMIN_ID:
+        await message.answer("🛠 В боте проводятся технические работы. Скоро вернемся!", parse_mode=ParseMode.MARKDOWN)
+        return
+
     is_vip = check_vip_status_expiration(message.from_user.id, ADMIN_ID)
     welcome_text = (
         f"🔄 **Бот успешно перезапущен!**\n\n"
@@ -129,6 +141,13 @@ async def restart_button_handler(message: types.Message, state: FSMContext):
 @dp.message(F.text == "ℹ️ О боте и правилах")
 async def about_bot_handler(message: types.Message, state: FSMContext):
     await state.clear()
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        return
+
+    if get_maintenance_mode() == 'on' and message.from_user.id != ADMIN_ID:
+        await message.answer("🛠 В боте проводятся технические работы.")
+        return
+
     info_text = (
         f"🤖 **О боте PulseFetch:**\n\n"
         f"Этот бот создан для быстрой и удобной загрузки видео и аудио из TikTok, YouTube, Instagram Reels и других платформ.\n\n"
@@ -142,6 +161,13 @@ async def about_bot_handler(message: types.Message, state: FSMContext):
 @dp.message(F.text == "📥 Скачать медиа")
 async def choose_platform_menu(message: types.Message, state: FSMContext):
     await state.clear()
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        return
+
+    if get_maintenance_mode() == 'on' and message.from_user.id != ADMIN_ID:
+        await message.answer("🛠 В боте проводятся технические работы.")
+        return
+
     platforms_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎵 TikTok", callback_data="platform_tiktok"),
          InlineKeyboardButton(text="📺 YouTube / Shorts", callback_data="platform_youtube")],
@@ -158,8 +184,11 @@ async def choose_platform_menu(message: types.Message, state: FSMContext):
 @dp.callback_query(F.data.startswith("platform_"))
 async def process_platform_choice(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
+    if get_maintenance_mode() == 'on' and callback.from_user.id != ADMIN_ID:
+        await callback.message.answer("🛠 В боте проводятся технические работы.")
+        return
+
     platform_code = callback.data.replace("platform_", "")
-    
     platform_names = {
         "tiktok": "TikTok",
         "youtube": "YouTube / Shorts",
@@ -196,7 +225,6 @@ async def process_platform_choice(callback: types.CallbackQuery, state: FSMConte
 @dp.callback_query(F.data == "back_to_platforms")
 async def back_to_platforms(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
-    await state.clear()
     platforms_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎵 TikTok", callback_data="platform_tiktok"),
          InlineKeyboardButton(text="📺 YouTube / Shorts", callback_data="platform_youtube")],
@@ -211,6 +239,13 @@ async def back_to_platforms(callback: types.CallbackQuery, state: FSMContext):
     )
 @dp.message(DownloadStates.waiting_for_link, F.text)
 async def process_link_received(message: types.Message, state: FSMContext):
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        return
+
+    if get_maintenance_mode() == 'on' and message.from_user.id != ADMIN_ID:
+        await message.answer("🛠 В боте проводятся технические работы.")
+        return
+
     url = message.text.strip()
     if not re.match(r'https?://[^\s]+', url):
         await message.answer("❌ Это не похоже на ссылку. Пожалуйста, отправь корректную ссылку:")
@@ -276,9 +311,8 @@ async def process_format_choice(callback: types.CallbackQuery, state: FSMContext
 
     if not is_vip and action != "audio":
         await callback.message.edit_text(
-            "📺 **Реклама:**\n"
-            "Хочешь скачивать видео в 2K/4K без рекламы? Пригласи друзей или подключи VIP за звезды!\n\n"
-            "⏳ *Обрабатываем твою ссылку...*",
+            "📺 **Обработка запроса...**\n\n"
+            "⏳ *Скачиваем медиа с учетом твоего тарифа...*",
             parse_mode=ParseMode.MARKDOWN
         )
     else:
@@ -289,13 +323,15 @@ async def process_format_choice(callback: types.CallbackQuery, state: FSMContext
     audio_path = f"{base_name}.mp3"
 
     try:
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, download_selected_media, url, base_name, is_vip, action)
+        loop = asyncio.get_running_loop()
+        success = await loop.run_in_executor(None, download_selected_media_safe, url, base_name, is_vip, action)
 
-        # Проверка видео
+        if not success:
+            await callback.message.answer("❌ Не удалось скачать медиа. Проверь правильность ссылки или попробуй другую платформу.", reply_markup=get_restart_inline_keyboard())
+            return
+
         has_video = os.path.exists(video_path) and os.path.getsize(video_path) > 0
 
-        # Умный поиск аудио (перестраховка на случай любых расширений от yt-dlp/ffmpeg)
         final_audio_path = None
         for ext in ['.mp3', '.m4a', '.opus', '.webm', '.wav', '.aac']:
             possible_path = f"{base_name}{ext}"
@@ -303,22 +339,24 @@ async def process_format_choice(callback: types.CallbackQuery, state: FSMContext
                 final_audio_path = possible_path
                 break
         
-        # Если аудио скачалось не как .mp3, но найдено — переименовываем в .mp3 для Telegram
         if final_audio_path and not final_audio_path.endswith('.mp3'):
-            os.rename(final_audio_path, audio_path)
-            final_audio_path = audio_path
+            try:
+                os.rename(final_audio_path, audio_path)
+                final_audio_path = audio_path
+            except:
+                pass
 
         has_audio = final_audio_path and os.path.exists(final_audio_path) and os.path.getsize(final_audio_path) > 0
 
         if not has_video and not has_audio:
-            await callback.message.answer("❌ Не удалось скачать медиа. Проверь правильность ссылки или доступность ресурса.", reply_markup=get_restart_inline_keyboard())
+            await callback.message.answer("❌ Файлы не найдены после загрузки. Попробуй еще раз.", reply_markup=get_restart_inline_keyboard())
             return
 
         if is_vip:
             video_caption = "🌟 **VIP Видео (4K)**"
             audio_caption = "🎵 **VIP Аудиодорожка**"
         else:
-            video_caption = f"🎥 **Видео (720p)**\n📥 Скачано через @{BOT_USERNAME}\n\n💡 *Хочешь качество 4K? Нажми «🎁 Бесплатный VIP за друзей»!*"
+            video_caption = f"🎥 **Видео (720p)**\n📥 Скачано через @{BOT_USERNAME}"
             audio_caption = f"🎵 **Аудиодорожка**\n📥 @{BOT_USERNAME}"
 
         if has_video and action in ["video", "both"]:
@@ -330,10 +368,9 @@ async def process_format_choice(callback: types.CallbackQuery, state: FSMContext
             await callback.message.answer_audio(audio=audio_file, caption=audio_caption, parse_mode=ParseMode.MARKDOWN)
 
     except Exception as e:
-        logging.error(f"Ошибка загрузки: {e}")
-        await callback.message.answer("❌ Произошла ошибка при загрузке медиа.", reply_markup=get_restart_inline_keyboard())
+        logging.error(f"Критическая ошибка при отправке медиа: {e}")
+        await callback.message.answer("❌ Произошла ошибка при обработке медиафайла.", reply_markup=get_restart_inline_keyboard())
     finally:
-        # Очистка всех временных файлов
         for ext in ['.mp4', '.mp3', '.m4a', '.opus', '.webm', '.wav', '.aac', '.part']:
             temp_file = f"{base_name}{ext}"
             if os.path.exists(temp_file):
@@ -348,8 +385,8 @@ async def cancel_action(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("Отменено")
     await callback.message.edit_text("❌ Действие отменено.")
 
-# Полностью перестрахованный загрузчик для стабильной работы с аудио и видео
-def download_selected_media(url: str, base_filename: str, is_vip: int, action: str):
+def download_selected_media_safe(url: str, base_filename: str, is_vip: int, action: str) -> bool:
+    downloaded = False
     common_opts = {
         'noplaylist': True,
         'quiet': True,
@@ -363,11 +400,7 @@ def download_selected_media(url: str, base_filename: str, is_vip: int, action: s
     }
 
     if action in ["video", "both"]:
-        if is_vip:
-            video_format = 'best[ext=mp4]/best'
-        else:
-            video_format = 'best[height<=720][ext=mp4]/best[ext=mp4]/best'
-
+        video_format = 'best[ext=mp4]/best' if is_vip else 'best[height<=720][ext=mp4]/best[ext=mp4]/best'
         ydl_opts_video = {
             **common_opts,
             'format': video_format,
@@ -377,8 +410,9 @@ def download_selected_media(url: str, base_filename: str, is_vip: int, action: s
         try:
             with yt_dlp.YoutubeDL(ydl_opts_video) as ydl:
                 ydl.download([url])
+                downloaded = True
         except Exception as e:
-            logging.error(f"Ошибка скачивания видео: {e}")
+            logging.error(f"Ошибка yt-dlp при скачивании видео: {e}")
 
     if action in ["audio", "both"]:
         ydl_opts_audio = {
@@ -395,10 +429,73 @@ def download_selected_media(url: str, base_filename: str, is_vip: int, action: s
         try:
             with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
                 ydl.download([url])
+                downloaded = True
         except Exception as e:
-            logging.error(f"Ошибка скачивания аудио: {e}")
+            logging.error(f"Ошибка yt-dlp при скачивании аудио: {e}")
 
-# Персональная панель администратора
+    return downloaded
+
+# --- УМНЫЙ АВТОСКАНЕР ДЛЯ ГРУПП (СРАБАТЫВАЕТ ТОЛЬКО НА ССЫЛКИ В ЧАТЕ) ---
+@dp.message(F.text)
+async def handle_group_autoscanner_and_text(message: types.Message, state: FSMContext):
+    text = message.text.strip()
+    
+    # 1. Если это группа и в сообщении есть ссылка — активируем умный автосканер!
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        if re.match(r'https?://[^\s]+', text):
+            status_msg = await message.answer("🔄 **Автосканер:** обнаружил ссылку, скачиваю видео...", parse_mode=ParseMode.MARKDOWN)
+            base_name = f"group_media_{message.chat.id}_{message.message_id}"
+            video_path = f"{base_name}.mp4"
+            
+            try:
+                loop = asyncio.get_running_loop()
+                success = await loop.run_in_executor(None, download_selected_media_safe, text, base_name, 0, "video")
+                
+                if success and os.path.exists(video_path) and os.path.getsize(video_path) > 0:
+                    video_file = FSInputFile(video_path)
+                    await message.answer_video(video=video_file, caption=f"📥 Скачано через @{BOT_USERNAME}", parse_mode=ParseMode.MARKDOWN)
+                    try:
+                        await status_msg.delete()
+                    except:
+                        pass
+                else:
+                    await status_msg.edit_text("❌ Не удалось скачать медиа по этой ссылке в группе.")
+            except Exception as e:
+                logging.error(f"Ошибка автосканера в группе: {e}")
+                try:
+                    await status_msg.edit_text("❌ Произошла ошибка при автосканировании.")
+                except:
+                    pass
+            finally:
+                if os.path.exists(video_path):
+                    try:
+                        os.remove(video_path)
+                    except:
+                        pass
+        return  # В группе больше на обычный текст бот не реагирует!
+
+    # 2. Логика для личных сообщений (рассылка админа и подсказки)
+    if message.from_user.id == ADMIN_ID and ADMIN_ID in waiting_for_broadcast:
+        waiting_for_broadcast.remove(ADMIN_ID)
+        users = db_get_all_users()
+        success = 0
+        for uid in users:
+            try:
+                await message.copy_to(chat_id=uid)
+                success += 1
+                await asyncio.sleep(0.05)
+            except:
+                pass
+        await message.answer(f"✅ Рассылка завершена. Успешно: {success}/{len(users)}")
+        return
+    
+    if get_maintenance_mode() == 'on' and message.from_user.id != ADMIN_ID:
+        await message.answer("🛠 В боте проводятся технические работы. Скоро вернемся!")
+        return
+        
+    await message.answer("ℹ️ Пожалуйста, используй кнопку **«📥 Скачать медиа»** в меню, чтобы начать процесс скачивания.", parse_mode=ParseMode.MARKDOWN)
+
+# Админ-панель
 @dp.message(F.text == "👑 Админ-панель")
 async def open_admin_panel(message: types.Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID:
@@ -422,7 +519,7 @@ async def admin_stats(message: types.Message):
     maint = "Включены 🔴" if get_maintenance_mode() == 'on' else "Выключены 🟢"
     await message.answer(f"📊 **Статистика:**\n👥 Всего пользователей: `{total}`\n🌟 VIP пользователей: `{vips}`\n🛠 Тех. работы: {maint}", parse_mode=ParseMode.MARKDOWN)
 
-@dp.message(F.text.in_({"🟢 Включить тех. работы", "🔴 Выключить тех. работы"}))
+@dp.message(F.text.in_({"🟢 Выключить тех. работы", "🔴 Включить тех. работы"}))
 async def admin_toggle_maint(message: types.Message):
     if message.from_user.id != ADMIN_ID:
         return
@@ -440,6 +537,13 @@ async def admin_broadcast(message: types.Message):
 @dp.message(F.text == "🎁 Бесплатный VIP за друзей")
 async def referral_menu(message: types.Message, state: FSMContext):
     await state.clear()
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        return
+
+    if get_maintenance_mode() == 'on' and message.from_user.id != ADMIN_ID:
+        await message.answer("🛠 В боте проводятся технические работы.")
+        return
+
     user_id = message.from_user.id
     refs, claimed = db_get_user_info(user_id)
     ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
@@ -468,6 +572,13 @@ async def referral_menu(message: types.Message, state: FSMContext):
 @dp.message(F.text.startswith("💎 Купить VIP"))
 async def buy_vip_command(message: types.Message, state: FSMContext):
     await state.clear()
+    if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+        return
+
+    if get_maintenance_mode() == 'on' and message.from_user.id != ADMIN_ID:
+        await message.answer("🛠 В боте проводятся технические работы.")
+        return
+
     prices = [LabeledPrice(label="VIP Подписка (1 месяц)", amount=100)]
     await message.answer_invoice(
         title="🌟 VIP-статус для PulseFetch",
@@ -513,28 +624,6 @@ async def callback_buy_vip(callback: types.CallbackQuery):
         currency="XTR",
         provider_token=""
     )
-
-@dp.message(F.text)
-async def handle_text_broadcast(message: types.Message, state: FSMContext):
-    if message.from_user.id == ADMIN_ID and ADMIN_ID in waiting_for_broadcast:
-        waiting_for_broadcast.remove(ADMIN_ID)
-        users = db_get_all_users()
-        success = 0
-        for uid in users:
-            try:
-                await message.copy_to(chat_id=uid)
-                success += 1
-                await asyncio.sleep(0.05)
-            except:
-                pass
-        await message.answer(f"✅ Рассылка завершена. Успешно: {success}/{len(users)}")
-        return
-    
-    if get_maintenance_mode() == 'on' and message.from_user.id != ADMIN_ID:
-        await message.answer("🛠 Бот на техобслуживании.")
-        return
-        
-    await message.answer("ℹ️ Пожалуйста, используй кнопку **«📥 Скачать медиа»** в меню, чтобы начать процесс скачивания.", parse_mode=ParseMode.MARKDOWN)
 
 async def main():
     await start_web_server()
