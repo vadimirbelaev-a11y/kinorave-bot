@@ -41,18 +41,17 @@ from database import (
 )
 
 # ───────────────────────── КОНФИГ ─────────────────────────
-BOT_TOKEN = "8945702554:AAGxV9zRNvf_iX17bh1GzHZLqh_wDap6lvE"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8945702554:AAGxV9zRNvf_iX17bh1GzHZLqh_wDap6lvE")
 ADMIN_ID = 6444735646
-BOT_USERNAME = os.getenv("BOT_USERNAME", "pulsefetch_bot")  # уточняется через getMe при запуске
-COOKIES_FILE = os.getenv("COOKIES_FILE", "")      # cookies.txt (Netscape) для Instagram/YouTube
-LOCAL_API_URL = os.getenv("LOCAL_API_URL", "")    # локальный Bot API: загрузки до 2000 МБ
+BOT_USERNAME = os.getenv("BOT_USERNAME", "pulsefetch_bot")
+COOKIES_FILE = os.getenv("COOKIES_FILE", "cookies.txt")
+LOCAL_API_URL = os.getenv("LOCAL_API_URL", "")
 
-# Облачный Bot API принимает файлы только до 50 МБ; локальный — до 2000 МБ.
 TG_CAP_MB = 2000 if LOCAL_API_URL else 50
 FREE_LIMIT_MB = min(500, TG_CAP_MB)
 VIP_LIMIT_MB = min(2000, TG_CAP_MB)
-FREE_HEIGHTS = [720, 480, 360]            # бесплатно — жёстко до 720p
-VIP_HEIGHTS = [0, 1080, 720, 480, 360]    # 0 = максимально доступное
+FREE_HEIGHTS = [720, 480, 360]
+VIP_HEIGHTS = [0, 1080, 720, 480, 360]
 MAX_PARALLEL = int(os.getenv("MAX_PARALLEL", "3"))
 DOWNLOAD_TIMEOUT = 900
 FFMPEG_TIMEOUT = 900
@@ -84,20 +83,18 @@ DL_SEM = asyncio.Semaphore(MAX_PARALLEL)
 IN_FLIGHT: set = set()
 BG_TASKS: set = set()
 _last_action: dict = {}
+
 def fmt_limit(mb: int) -> str:
     return f"{mb // 1000} ГБ" if mb >= 1000 else f"{mb} МБ"
 
-
 def esc(s) -> str:
     return html.escape(str(s or ""))
-
 
 async def quiet(coro):
     try:
         return await coro
     except Exception:
         return None
-
 
 def cooldown(uid: int, sec: float) -> bool:
     now = time.monotonic()
@@ -108,7 +105,6 @@ def cooldown(uid: int, sec: float) -> bool:
         return False
     _last_action[uid] = now
     return True
-
 
 def extract_urls(message: Message) -> list:
     text = message.text or message.caption or ""
@@ -128,14 +124,12 @@ def extract_urls(message: Message) -> list:
             out.append(u)
     return out
 
-
 def host_supported(url: str) -> bool:
     m = re.match(r"https?://([^/:?#]+)", url, re.I)
     if not m:
         return False
     host = m.group(1).lower()
     return any(host == h or host.endswith("." + h) for h in GROUP_HOSTS)
-
 
 def all_user_ids() -> list:
     ids = []
@@ -146,14 +140,12 @@ def all_user_ids() -> list:
             continue
     return ids
 
-
 def get_vip(user_id: int) -> bool:
     try:
         return bool(check_vip_status_expiration(user_id, ADMIN_ID))
     except Exception:
         log.exception("check_vip_status_expiration")
         return False
-
 
 async def safe_edit(msg, text: str, markup=None):
     try:
@@ -162,16 +154,11 @@ async def safe_edit(msg, text: str, markup=None):
         pass
     except Exception:
         log.exception("safe_edit")
-
-
-# ───────────────────────── ЗАГРУЗКА / FFMPEG ─────────────────────────
 class MediaError(Exception):
     pass
 
-
 class DownloadCancelled(Exception):
     pass
-
 
 @dataclass
 class Result:
@@ -183,14 +170,12 @@ class Result:
     height: int = 0
     duration: int = 0
 
-
 def build_format(h: int) -> str:
     if h == 0:
         return "bv*[vcodec^=avc1]+ba[acodec^=mp4a]/bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b"
     f = f"[height<=?{h}]"
     return (f"bv*{f}[vcodec^=avc1]+ba[acodec^=mp4a]/bv*{f}[ext=mp4]+ba[ext=m4a]/"
             f"b{f}[ext=mp4]/bv*{f}+ba/b{f}")
-
 
 def _ydl_opts(tmp: Path, fmt: str, cancel: threading.Event, use_clients: bool, limit: int) -> dict:
     def hook(_d):
@@ -221,10 +206,13 @@ def _ydl_opts(tmp: Path, fmt: str, cancel: threading.Event, use_clients: bool, l
     }
     if use_clients:
         opts["extractor_args"] = {"youtube": {"player_client": YT_CLIENTS}}
+    
     if COOKIES_FILE and Path(COOKIES_FILE).is_file():
         opts["cookiefile"] = COOKIES_FILE
-    return opts
+    elif Path("cookies.txt").is_file():
+        opts["cookiefile"] = "cookies.txt"
 
+    return opts
 
 def _download_sync(url: str, tmp: Path, fmt: str, cancel: threading.Event, limit: int):
     last_err: Optional[Exception] = None
@@ -243,13 +231,11 @@ def _download_sync(url: str, tmp: Path, fmt: str, cancel: threading.Event, limit
             log.warning("yt-dlp (clients=%s) failed: %s", use_clients, str(e)[:300])
     raise MediaError(str(last_err) if last_err else "download failed")
 
-
 def _find_file(tmp: Path, exts: tuple) -> Optional[Path]:
     files = [p for p in tmp.iterdir()
              if p.is_file() and p.suffix.lower() in exts
              and not p.name.endswith((".part", ".ytdl")) and p.stat().st_size > 0]
     return max(files, key=lambda p: p.stat().st_size) if files else None
-
 
 async def _run(*cmd, timeout: int):
     proc = await asyncio.create_subprocess_exec(
@@ -261,7 +247,6 @@ async def _run(*cmd, timeout: int):
         await proc.wait()
         raise MediaError("ffmpeg: таймаут")
     return proc.returncode, out, err
-
 
 async def _probe(path: Path) -> Optional[dict]:
     try:
@@ -282,7 +267,6 @@ async def _probe(path: Path) -> Optional[dict]:
         dur = 0
     return {"vcodec": v.get("codec_name"), "acodec": a.get("codec_name") if a else None,
             "w": int(v.get("width") or 0), "h": int(v.get("height") or 0), "dur": dur}
-
 
 async def _normalize(src: Path, tmp: Path, max_h: int) -> Path:
     info = await _probe(src)
@@ -307,7 +291,6 @@ async def _normalize(src: Path, tmp: Path, max_h: int) -> Path:
         src.unlink(missing_ok=True)
     return out
 
-
 async def _to_mp3(src: Path, tmp: Path, limit: int) -> Path:
     for br in (192, 128, 64):
         out = tmp / f"audio_{br}.mp3"
@@ -320,17 +303,14 @@ async def _to_mp3(src: Path, tmp: Path, limit: int) -> Path:
             return out
     raise MediaError("слишком большой файл")
 
-
 def _clear(tmp: Path):
     for f in tmp.iterdir():
         if f.is_file():
             f.unlink(missing_ok=True)
 
-
 def _retryable(e: Exception) -> bool:
     s = str(e).lower()
     return any(k in s for k in ("requested format", "ffmpeg", "слишком большой", "нет видеопотока"))
-
 
 async def _dl(url: str, tmp: Path, fmt: str, cancel: threading.Event, limit: int):
     try:
@@ -339,7 +319,6 @@ async def _dl(url: str, tmp: Path, fmt: str, cancel: threading.Event, limit: int
     except asyncio.TimeoutError:
         cancel.set()
         raise MediaError("таймаут загрузки")
-
 
 async def fetch_media(url: str, heights: list, want_video: bool, want_audio: bool,
                       limit: int) -> Result:
@@ -390,7 +369,6 @@ async def fetch_media(url: str, heights: list, want_video: bool, want_audio: boo
         shutil.rmtree(tmp, ignore_errors=True)
         raise
 
-
 def friendly_error(e: Exception, limit_mb: int) -> str:
     s = str(e).lower()
     if "слишком большой" in s:
@@ -405,7 +383,6 @@ def friendly_error(e: Exception, limit_mb: int) -> str:
         return "⏱ Сервер долго не отвечает. Попробуйте позже."
     return "❌ Не удалось скачать медиа. Проверьте ссылку или попробуйте позже."
 
-
 async def _retry_send(factory):
     for _ in range(3):
         try:
@@ -413,7 +390,6 @@ async def _retry_send(factory):
         except TelegramRetryAfter as e:
             await asyncio.sleep(e.retry_after + 1)
     raise MediaError("не удалось отправить файл")
-
 
 async def send_video_file(bot: Bot, chat_id: int, res: Result, caption: str,
                           reply_to: Optional[int], markup):
@@ -434,14 +410,12 @@ async def send_video_file(bot: Bot, chat_id: int, res: Result, caption: str,
         log.warning("send_video failed (%s) -> document", e)
         await _retry_send(as_doc)
 
-
 async def send_audio_file(bot: Bot, chat_id: int, res: Result, caption: str,
                           reply_to: Optional[int], markup):
     rp = ReplyParameters(message_id=reply_to, allow_sending_without_reply=True) if reply_to else None
     await _retry_send(lambda: bot.send_audio(chat_id, FSInputFile(res.audio), caption=caption,
                                              title=res.title[:60], reply_markup=markup,
                                              reply_parameters=rp))
-
 
 async def job(bot: Bot, chat_id: int, user_id: int, url: str, action: str, is_vip: bool, *,
               reply_to: Optional[int] = None, markup=None, silent: bool = False,
@@ -483,7 +457,6 @@ async def job(bot: Bot, chat_id: int, user_id: int, url: str, action: str, is_vi
             shutil.rmtree(res.tmpdir, ignore_errors=True)
         if status:
             await quiet(status.delete())
-# ───────────────────────── ТЕКСТЫ И КЛАВИАТУРЫ ─────────────────────────
 def get_vip_comparison_text() -> str:
     return (
         "⚡️ <b>СРАВНЕНИЕ ТАРИФОВ И ВОЗМОЖНОСТЕЙ</b>\n\n"
@@ -499,7 +472,6 @@ def get_vip_comparison_text() -> str:
         "за приглашение 3 друзей!</i>"
     )
 
-
 def get_main_keyboard(user_id: int, is_vip) -> ReplyKeyboardMarkup:
     vip_label = "🌟 VIP Статус (Активен)" if is_vip else "💎 Купить VIP (Без рекламы и 4K)"
     rows = [
@@ -512,7 +484,6 @@ def get_main_keyboard(user_id: int, is_vip) -> ReplyKeyboardMarkup:
         rows.insert(0, [KeyboardButton(text="👑 Админ-панель")])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
-
 def get_admin_panel_keyboard() -> ReplyKeyboardMarkup:
     maint_text = ("🟢 Выключить тех. работы" if get_maintenance_mode() == "on"
                   else "🔴 Включить тех. работы")
@@ -523,11 +494,9 @@ def get_admin_panel_keyboard() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="⬅️ Выйти из админки")],
     ], resize_keyboard=True)
 
-
 def get_restart_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔄 Главное меню / Перезапуск", callback_data="restart_bot")]])
-
 
 def get_platforms_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -538,20 +507,15 @@ def get_platforms_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_action")],
     ])
 
-
 PLATFORMS_TEXT = "📂 <b>Шаг 1 из 2:</b> Выбери платформу, с которой хочешь скачать контент:"
 MAINT_TEXT = "🛠 В боте проводятся технические работы. Скоро вернемся!"
 
-
-# ───────────────────────── FSM / MIDDLEWARE ─────────────────────────
 class DownloadStates(StatesGroup):
     waiting_for_link = State()
     waiting_for_format = State()
 
-
 class AdminStates(StatesGroup):
     waiting_for_broadcast = State()
-
 
 class MaintenanceMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
@@ -566,21 +530,15 @@ class MaintenanceMiddleware(BaseMiddleware):
             return None
         return await handler(event, data)
 
-
-# ───────────────────────── ПЛАТЕЖИ ─────────────────────────
 pay_router = Router(name="pay")
-
 
 @pay_router.pre_checkout_query()
 async def pre_checkout(q: PreCheckoutQuery):
     await q.answer(ok=True)
 
-
-# ───────────────────────── ЛИЧНЫЕ СООБЩЕНИЯ ─────────────────────────
 private_router = Router(name="private")
 private_router.message.filter(F.chat.type == ChatType.PRIVATE)
 private_router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
-
 
 @private_router.message(CommandStart())
 async def cmd_start(message: Message, command: CommandObject, state: FSMContext, bot: Bot):
@@ -610,7 +568,6 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext,
         f"👇 Нажми кнопку <b>«📥 Скачать медиа»</b>, чтобы выбрать платформу!",
         reply_markup=get_main_keyboard(uid, is_vip))
 
-
 @private_router.message(F.text == "🔄 Перезапустить бота")
 async def restart_button_handler(message: Message, state: FSMContext):
     await state.clear()
@@ -619,7 +576,6 @@ async def restart_button_handler(message: Message, state: FSMContext):
         "👇 Нажми кнопку <b>«📥 Скачать медиа»</b>, чтобы выбрать платформу!",
         reply_markup=get_main_keyboard(message.from_user.id, get_vip(message.from_user.id)))
 
-
 @private_router.callback_query(F.data == "restart_bot")
 async def callback_restart(callback: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -627,7 +583,6 @@ async def callback_restart(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "⚡️ <b>Главное меню PulseFetch</b>\n\n👇 Нажми кнопку <b>«📥 Скачать медиа»</b>:",
         reply_markup=get_main_keyboard(callback.from_user.id, get_vip(callback.from_user.id)))
-
 
 @private_router.message(F.text == "ℹ️ О боте и правилах")
 async def about_bot_handler(message: Message, state: FSMContext):
@@ -640,19 +595,16 @@ async def about_bot_handler(message: Message, state: FSMContext):
         "⚡️ Нажми кнопку ниже, чтобы вернуться в главное меню:",
         reply_markup=get_restart_inline_keyboard())
 
-
 @private_router.message(F.text == "👑 Админ-панель", F.from_user.id == ADMIN_ID)
 async def open_admin_panel(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("👑 <b>Панель администратора открыта:</b>", reply_markup=get_admin_panel_keyboard())
-
 
 @private_router.message(F.text == "⬅️ Выйти из админки", F.from_user.id == ADMIN_ID)
 async def exit_admin_panel(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Выход из админ-панели.",
                          reply_markup=get_main_keyboard(message.from_user.id, get_vip(message.from_user.id)))
-
 
 @private_router.message(F.text == "📊 Статистика бота", F.from_user.id == ADMIN_ID)
 async def admin_stats(message: Message, state: FSMContext):
@@ -662,7 +614,6 @@ async def admin_stats(message: Message, state: FSMContext):
     await message.answer(f"📊 <b>Статистика:</b>\n👥 Всего пользователей: <code>{total}</code>\n"
                          f"🌟 VIP пользователей: <code>{vips}</code>\n🛠 Тех. работы: {maint}")
 
-
 @private_router.message(F.text.in_({"🟢 Выключить тех. работы", "🔴 Включить тех. работы"}),
                         F.from_user.id == ADMIN_ID)
 async def admin_toggle_maint(message: Message, state: FSMContext):
@@ -670,13 +621,11 @@ async def admin_toggle_maint(message: Message, state: FSMContext):
     set_maintenance_mode("off" if get_maintenance_mode() == "on" else "on")
     await message.answer("Состояние тех. работ изменено.", reply_markup=get_admin_panel_keyboard())
 
-
 @private_router.message(F.text == "📢 Сделать рассылку", F.from_user.id == ADMIN_ID)
 async def admin_broadcast(message: Message, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_broadcast)
     await message.answer("✍️ Отправь сообщение для рассылки всем пользователям "
                          "(текст, фото, видео — любое).\nДля отмены нажми любую кнопку меню.")
-
 
 async def run_broadcast(bot: Bot, src_chat: int, src_msg: int):
     ids = all_user_ids()
@@ -694,18 +643,15 @@ async def run_broadcast(bot: Bot, src_chat: int, src_msg: int):
         await asyncio.sleep(0.05)
     await quiet(bot.send_message(ADMIN_ID, f"✅ Рассылка завершена. Успешно доставлено: {ok}/{len(ids)}"))
 
-
 @private_router.message(F.text == "📥 Скачать медиа")
 async def choose_platform_menu(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(PLATFORMS_TEXT, reply_markup=get_platforms_keyboard())
 
-
 @private_router.callback_query(F.data == "back_to_platforms")
 async def back_to_platforms(callback: CallbackQuery):
     await callback.answer()
     await safe_edit(callback.message, PLATFORMS_TEXT, get_platforms_keyboard())
-
 
 @private_router.callback_query(F.data.startswith("platform_"))
 async def process_platform_choice(callback: CallbackQuery, state: FSMContext):
@@ -728,7 +674,6 @@ async def process_platform_choice(callback: CallbackQuery, state: FSMContext):
                 f"⚠️ <i>Отправляй ссылку строго на {name}.</i>\n\nОтправь ссылку в чат:")
     await safe_edit(callback.message, hint, InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад к выбору платформ", callback_data="back_to_platforms")]]))
-
 
 @private_router.message(DownloadStates.waiting_for_link, F.text)
 async def process_link_received(message: Message, state: FSMContext):
@@ -767,7 +712,6 @@ async def process_link_received(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_action")],
         ]))
 
-
 @private_router.callback_query(DownloadStates.waiting_for_format, F.data.startswith("fmt_"))
 async def process_format_choice(callback: CallbackQuery, state: FSMContext, bot: Bot):
     await callback.answer()
@@ -796,18 +740,15 @@ async def process_format_choice(callback: CallbackQuery, state: FSMContext, bot:
     await job(bot, callback.message.chat.id, uid, url, action, is_vip,
               markup=get_restart_inline_keyboard(), status=callback.message)
 
-
 @private_router.callback_query(F.data.startswith("fmt_"))
 async def stale_format(callback: CallbackQuery):
     await callback.answer("Сессия устарела. Начни заново через «📥 Скачать медиа».", show_alert=True)
-
 
 @private_router.callback_query(F.data == "cancel_action")
 async def cancel_action(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer("Отменено")
     await safe_edit(callback.message, "❌ Действие отменено.")
-
 
 @private_router.message(F.text.startswith("💎 Купить VIP") | (F.text == "🌟 VIP Статус (Активен)"))
 async def buy_vip_command(message: Message, state: FSMContext):
@@ -820,7 +761,6 @@ async def buy_vip_command(message: Message, state: FSMContext):
     await message.answer(f"{get_vip_comparison_text()}\n\n"
                          "💳 <b>Стоимость VIP подписки на 30 дней:</b> 100 Telegram Stars ✨")
 
-
 @private_router.message(F.successful_payment)
 async def successful_payment_handler(message: Message):
     if message.successful_payment.invoice_payload != "vip_subscription_30_days":
@@ -831,7 +771,6 @@ async def successful_payment_handler(message: Message):
         f"Тебе присвоен статус 🌟 <b>VIP</b> на 30 дней! Теперь тебе доступны файлы до "
         f"{fmt_limit(VIP_LIMIT_MB)} и максимальное качество!",
         reply_markup=get_main_keyboard(message.from_user.id, get_vip(message.from_user.id)))
-
 
 @private_router.message(F.text == "🎁 Бесплатный VIP за друзей")
 async def referral_menu(message: Message, state: FSMContext):
@@ -853,6 +792,7 @@ async def referral_menu(message: Message, state: FSMContext):
         "выдается <b>VIP на 24 часа</b> (до 3 раз)!\n\n"
         f"🔗 <b>Твоя реферальная ссылка:</b>\n<code>{ref_link}</code>\n\n{status}",
         reply_markup=get_restart_inline_keyboard())
+
 @private_router.message(AdminStates.waiting_for_broadcast, F.from_user.id == ADMIN_ID)
 async def admin_broadcast_send(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
@@ -861,16 +801,11 @@ async def admin_broadcast_send(message: Message, state: FSMContext, bot: Bot):
     task.add_done_callback(BG_TASKS.discard)
     await message.answer("🚀 Рассылка запущена, отчёт придёт по завершении.")
 
-
 @private_router.message(F.text)
 async def private_fallback(message: Message):
     await message.answer("ℹ️ Пожалуйста, используй кнопку <b>«📥 Скачать медиа»</b> в меню, "
                          "чтобы начать процесс скачивания.")
-
-
-# ───────────────────────── ГРУППЫ ─────────────────────────
 group_router = Router(name="group")
-
 
 @group_router.my_chat_member(ChatMemberUpdatedFilter(JOIN_TRANSITION))
 async def bot_added_to_group(event: ChatMemberUpdated, bot: Bot):
@@ -887,18 +822,15 @@ async def bot_added_to_group(event: ChatMemberUpdated, bot: Bot):
         "Просто отправьте ссылку в чат — и я пришлю видео! Больше ничего не нужно.",
         reply_markup=kb))
 
-
 @group_router.callback_query(F.data == "g:hint")
 async def group_hint(callback: CallbackQuery):
     await callback.answer("📎 Просто отправь ссылку на видео в этот чат — "
                           "я сам её подхвачу и скачаю видео в качестве 720p с водяным знаком.", show_alert=True)
 
-
 @group_router.message(CommandStart(), F.chat.type.in_(GROUPS))
 async def group_start(message: Message):
     await message.answer("👋 Привет! Я <b>PulseFetch</b> — бот для скачивания медиа. "
                          "Просто отправь ссылку на видео в этот чат, и я скачаю его автоматически!")
-
 
 @group_router.message(F.chat.type.in_(GROUPS), F.text | F.caption)
 async def group_autoscan(message: Message, bot: Bot):
@@ -915,11 +847,8 @@ async def group_autoscan(message: Message, bot: Bot):
     BG_TASKS.add(task)
     task.add_done_callback(BG_TASKS.discard)
 
-
-# ───────────────────────── ВЕБ-СЕРВЕР И ЗАПУСК ─────────────────────────
 async def handle_ping(request):
     return web.Response(text="Bot is running!")
-
 
 async def start_web_server() -> web.AppRunner:
     app = web.Application()
@@ -931,12 +860,10 @@ async def start_web_server() -> web.AppRunner:
     log.info("Веб-сервер запущен на порту %s", port)
     return runner
 
-
 def cleanup_stale_tmp():
     base = Path(tempfile.gettempdir())
     for p in base.glob("pf_*"):
         shutil.rmtree(p, ignore_errors=True)
-
 
 async def main():
     global BOT_USERNAME
@@ -976,7 +903,6 @@ async def main():
             t.cancel()
         await bot.session.close()
         await runner.cleanup()
-
 
 if __name__ == "__main__":
     try:
