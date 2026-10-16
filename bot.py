@@ -53,6 +53,12 @@ def get_admin_keyboard():
     )
     return keyboard
 
+# Инлайн-панель для перезапуска бота
+def get_restart_inline_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Перезапустить бота", callback_data="restart_bot")]
+    ])
+
 waiting_for_broadcast = set()
 
 @dp.message(CommandStart())
@@ -91,6 +97,32 @@ async def cmd_start(message: types.Message):
     
     await message.answer(welcome_text, reply_markup=get_main_keyboard(is_vip), parse_mode=ParseMode.MARKDOWN)
 
+# Обработка кнопки "ℹ️ О боте и правилах"
+@dp.message(F.text == "ℹ️ О боте и правилах")
+async def about_bot_handler(message: types.Message):
+    info_text = (
+        f"🤖 **О боте PulseFetch:**\n\n"
+        f"Этот бот создан для быстрой и удобной загрузки видео и аудио из TikTok, YouTube, Instagram Reels и других платформ.\n\n"
+        f"📌 **Правила и условия:**\n"
+        f"• Максимальный размер файла для скачивания — 50 МБ.\n"
+        f"• На обычном тарифе видео загружается в качестве 720p с водяным знаком и рекламой.\n"
+        f"• VIP-пользователи получают доступ к качеству 4K, полному отсутствию рекламы и чистым файлам без водяных знаков.\n"
+        f"• Получить VIP на 24 часа можно, пригласив 3 друзей по реферальной ссылке (до 3 раз).\n\n"
+        f"⚡️ Нажми кнопку ниже, чтобы перезапустить бота или обновить меню:"
+    )
+    await message.answer(info_text, reply_markup=get_restart_inline_keyboard(), parse_mode=ParseMode.MARKDOWN)
+
+# Callback для инлайн-кнопки перезапуска
+@dp.callback_query(F.data == "restart_bot")
+async def callback_restart(callback: types.CallbackQuery):
+    await callback.answer("🔄 Бот перезапущен!")
+    is_vip = check_vip_status_expiration(callback.from_user.id, ADMIN_ID)
+    restart_text = (
+        f"⚡️ **Главное меню PulseFetch**\n\n"
+        f"Отправь мне ссылку на интересующий тебя ролик, чтобы начать скачивание!"
+    )
+    await callback.message.answer(restart_text, reply_markup=get_main_keyboard(is_vip), parse_mode=ParseMode.MARKDOWN)
+
 @dp.message(F.text == "🎁 Бесплатный VIP за друзей")
 async def referral_menu(message: types.Message):
     user_id = message.from_user.id
@@ -116,7 +148,7 @@ async def referral_menu(message: types.Message):
         f"🔗 **Твоя реферальная ссылка:**\n`{ref_link}`\n\n"
         f"{status_text}"
     )
-    await message.answer(text, parse_mode=ParseMode.MARKDOWN)
+    await message.answer(text, reply_markup=get_restart_inline_keyboard(), parse_mode=ParseMode.MARKDOWN)
 
 @dp.message(F.text.startswith("💎 Купить VIP"))
 async def buy_vip_command(message: types.Message):
@@ -186,7 +218,14 @@ def download_media_with_ytdlp(url: str, base_filename: str, is_vip: int):
         'quiet': True,
         'no_warnings': True,
         'max_filesize': 50 * 1024 * 1024,
+        'geo_bypass': True,
     }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts_video) as ydl:
+            ydl.download([url])
+    except Exception as e:
+        logging.error(f"Ошибка скачивания видео: {e}")
+
     ydl_opts_audio = {
         'format': 'bestaudio/best',
         'outtmpl': f"{base_filename}.%(ext)s",
@@ -198,11 +237,13 @@ def download_media_with_ytdlp(url: str, base_filename: str, is_vip: int):
         'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
+        'geo_bypass': True,
     }
-    with yt_dlp.YoutubeDL(ydl_opts_video) as ydl:
-        ydl.download([url])
-    with yt_dlp.YoutubeDL(yt_dlp.YoutubeDL(ydl_opts_audio) if False else ydl_opts_audio) as ydl:
-        ydl.download([url])
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
+            ydl.download([url])
+    except Exception as e:
+        logging.error(f"Ошибка скачивания аудио: {e}")
 
 @dp.message(F.text)
 async def handle_text(message: types.Message):
@@ -232,7 +273,8 @@ async def handle_text(message: types.Message):
 
     if not is_vip:
         ad_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💎 Убрать рекламу и включить 4K (Купить VIP)", callback_data="buy_vip_prompt")]
+            [InlineKeyboardButton(text="💎 Убрать рекламу и включить 4K (Купить VIP)", callback_data="buy_vip_prompt")],
+            [InlineKeyboardButton(text="🔄 Перезапустить бота", callback_data="restart_bot")]
         ])
         await message.answer(
             "📺 **Реклама:**\n"
@@ -262,7 +304,7 @@ async def handle_text(message: types.Message):
         has_audio = os.path.exists(audio_path)
 
         if not has_video and not has_audio:
-            await message.answer("❌ Не удалось скачать медиа. Проверь ссылку.")
+            await message.answer("❌ Не удалось скачать медиа. Проверь правильность ссылки.", reply_markup=get_restart_inline_keyboard())
             return
 
         if is_vip:
@@ -274,7 +316,7 @@ async def handle_text(message: types.Message):
 
         if has_video:
             video_file = FSInputFile(video_path)
-            await message.answer_video(video=video_file, caption=video_caption, parse_mode=ParseMode.MARKDOWN)
+            await message.answer_video(video=video_file, caption=video_caption, parse_mode=ParseMode.MARKDOWN, reply_markup=get_restart_inline_keyboard())
 
         if has_audio:
             audio_file = FSInputFile(audio_path)
@@ -282,7 +324,7 @@ async def handle_text(message: types.Message):
 
     except Exception as e:
         logging.error(f"Ошибка: {e}")
-        await message.answer("❌ Произошла ошибка при загрузке.")
+        await message.answer("❌ Произошла ошибка при загрузке.", reply_markup=get_restart_inline_keyboard())
     finally:
         for path in [video_path, audio_path]:
             if os.path.exists(path):
