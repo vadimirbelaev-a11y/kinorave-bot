@@ -388,29 +388,26 @@ async def _normalize(src: Path, tmp: Path, max_h: int, add_watermark: bool = Fal
     out = tmp / "final.mp4"
     need_scale = bool(max_h) and info["h"] > max_h
 
-    # Базовый видеофильтр
     vf_parts = []
     if need_scale:
         vf_parts.append(f"scale=-2:{max_h}")
     else:
         vf_parts.append("scale=trunc(iw/2)*2:trunc(ih/2)*2")
 
-    # Водяной знак только для бесплатных пользователей
+    # Уменьшенный водяной знак (только для бесплатных)
     if add_watermark:
-        # Текст по центру с полупрозрачным фоном
-        watermark_text = f"Скачано с помощью бота @{BOT_USERNAME}"
+        watermark_text = f"Скачано через @{BOT_USERNAME}"
         drawtext = (
             f"drawtext=text='{watermark_text}':"
-            f"fontsize=28:fontcolor=white:"
+            f"fontsize=18:fontcolor=white:"
             f"x=(w-text_w)/2:y=(h-text_h)/2:"
-            f"box=1:boxcolor=black@0.45:boxborderw=10"
+            f"box=1:boxcolor=black@0.4:boxborderw=6"
         )
         vf_parts.append(drawtext)
 
     vf = ",".join(vf_parts)
 
-    # Если можно просто скопировать и водяной знак не нужен
-    if (info["vcodec"] == "h264" and info["acodec"] in (None, "aac") 
+    if (info["vcodec"] == "h264" and info["acodec"] in (None, "aac")
             and not need_scale and not add_watermark):
         rc, _, _ = await _run("ffmpeg", "-y", "-v", "error", "-i", str(src), "-c", "copy",
                               "-movflags", "+faststart", str(out), timeout=FFMPEG_TIMEOUT)
@@ -419,7 +416,6 @@ async def _normalize(src: Path, tmp: Path, max_h: int, add_watermark: bool = Fal
                 src.unlink(missing_ok=True)
             return out
 
-    # Перекодирование с водяным знаком / масштабированием
     rc, _, err = await _run(
         "ffmpeg", "-y", "-v", "error", "-i", str(src),
         "-vf", vf,
@@ -591,7 +587,6 @@ async def job(bot: Bot, chat_id: int, user_id: int, url: str, action: str, is_vi
     try:
         async with DL_SEM:
             async with ChatActionSender.upload_video(bot=bot, chat_id=chat_id):
-                # Водяной знак только для бесплатных пользователей
                 add_wm = not is_vip
                 res = await fetch_media(
                     url, VIP_HEIGHTS if is_vip else FREE_HEIGHTS,
@@ -631,16 +626,15 @@ def get_vip_comparison_text() -> str:
         "• 🏷 Водяной знак бота: <b>есть</b>\n\n"
         "🌟 <b>VIP Подписка:</b>\n"
         f"• 📁 Максимальный размер файла: <b>до {fmt_limit(VIP_LIMIT_MB)}</b>\n"
-        "• 🎬 Качество видео: <b>максимальное (1080p и выше, если доступно)</b>\n"
-        "• 🎵 Выгрузка аудиодорожек (MP3) в высоком качестве\n"
+        "• 🎬 Качество видео: <b>максимальное (1080p и выше)</b>\n"
+        "• 🎵 Выгрузка аудиодорожек (MP3)\n"
         "• 🏷 Водяной знак бота: <b>отсутствует</b>\n\n"
-        "💡 <i>Вы можете купить VIP за Telegram Stars или получить 24 часа бесплатно "
-        "за приглашение 3 друзей!</i>"
+        "💡 <i>Купи VIP за Stars или получи 24 часа бесплатно за 3 друзей!</i>"
     )
 
 
 def get_main_keyboard(user_id: int, is_vip) -> ReplyKeyboardMarkup:
-    vip_label = "🌟 VIP Статус (Активен)" if is_vip else "💎 Купить VIP (Без рекламы и 4K)"
+    vip_label = "🌟 VIP Статус (Активен)" if is_vip else "💎 Купить VIP (Без водяного знака)"
     rows = [
         [KeyboardButton(text="📥 Скачать медиа")],
         [KeyboardButton(text=vip_label)],
@@ -737,7 +731,7 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext,
             referrer_id, "🎉 По твоей ссылке перешел новый друг! Пригласи еще для получения 24 часов VIP."))
 
     is_vip = get_vip(uid)
-    tariff = (f"🌟 <b>VIP (До {fmt_limit(VIP_LIMIT_MB)}, 4K, Без водяного знака)</b>" if is_vip
+    tariff = (f"🌟 <b>VIP (До {fmt_limit(VIP_LIMIT_MB)}, без водяного знака)</b>" if is_vip
               else f"👤 <b>Обычный (До {fmt_limit(FREE_LIMIT_MB)}, 720p)</b>")
     await message.answer(
         f"👋 <b>Привет, {esc(message.from_user.first_name)}!</b>\n\n"
@@ -926,9 +920,9 @@ async def process_format_choice(callback: CallbackQuery, state: FSMContext, bot:
     is_vip = get_vip(uid)
     if not is_vip and action != "audio":
         text = ("📺 <b>Обработка запроса...</b>\n"
-                f"📌 <i>Лимит обычного тарифа — до {fmt_limit(FREE_LIMIT_MB)} (качество 720p).</i>\n"
-                f"🌟 <i>Хочешь файлы до {fmt_limit(VIP_LIMIT_MB)} и без водяного знака? Подключи VIP!</i>\n\n"
-                "⏳ <i>Скачиваем файл...</i>")
+                f"📌 <i>Лимит — до {fmt_limit(FREE_LIMIT_MB)} (720p).</i>\n"
+                f"🌟 <i>Хочешь без водяного знака и больше качества? Подключи VIP!</i>\n\n"
+                "⏳ <i>Скачиваем...</i>")
     else:
         text = "🔄 <b>Загружаем медиа...</b> Подожди пару секунд."
     await safe_exit(callback.message, text)
@@ -953,11 +947,11 @@ async def buy_vip_command(message: Message, state: FSMContext):
     await state.clear()
     await message.answer_invoice(
         title="🌟 VIP-статус для PulseFetch",
-        description=f"Файлы до {fmt_limit(VIP_LIMIT_MB)}, максимальное качество, без водяного знака и MP3!",
+        description=f"Файлы до {fmt_limit(VIP_LIMIT_MB)}, без водяного знака, максимальное качество!",
         prices=[LabeledPrice(label="VIP Подписка (1 месяц)", amount=100)],
         payload="vip_subscription_30_days", currency="XTR", provider_token="")
     await message.answer(f"{get_vip_comparison_text()}\n\n"
-                         "💳 <b>Стоимость VIP подписки на 30 дней:</b> 100 Telegram Stars ✨")
+                         "💳 <b>Стоимость:</b> 100 Telegram Stars ✨")
 
 
 @private_router.message(F.successful_payment)
@@ -967,8 +961,8 @@ async def successful_payment_handler(message: Message):
     db_set_user_vip_months(message.from_user.id, 1)
     await message.answer(
         "🎉 <b>Оплата прошла успешно!</b>\n\n"
-        f"Тебе присвоен статус 🌟 <b>VIP</b> на 30 дней! Теперь тебе доступны файлы до "
-        f"{fmt_limit(VIP_LIMIT_MB)}, максимальное качество и <b>без водяного знака</b>!",
+        f"Тебе присвоен статус 🌟 <b>VIP</b> на 30 дней!\n"
+        f"Теперь файлы до {fmt_limit(VIP_LIMIT_MB)} и <b>без водяного знака</b>!",
         reply_markup=get_main_keyboard(message.from_user.id, get_vip(message.from_user.id)))
 
 
@@ -980,17 +974,16 @@ async def referral_menu(message: Message, state: FSMContext):
     ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{uid}"
     needed = 3 - (refs % 3)
     if claimed >= 3:
-        status = "🔥 <b>Ты полностью исчерпал все 3 бонусных активации по 24 часа!</b>"
+        status = "🔥 <b>Ты полностью исчерпал все 3 бонусных активации!</b>"
     else:
-        status = (f"📊 <b>Твоя статистика приглашений:</b>\n"
-                  f"• Приглашено друзей: <code>{refs}</code>\n"
-                  f"• Получено бонусов (на 24 часа): <code>{claimed} из 3</code>\n\n"
-                  f"🎯 До следующих 24 часов VIP осталось пригласить: <b>{needed} друга(-ей)</b>")
+        status = (f"📊 <b>Твоя статистика:</b>\n"
+                  f"• Приглашено: <code>{refs}</code>\n"
+                  f"• Получено бонусов: <code>{claimed} из 3</code>\n\n"
+                  f"🎯 До следующих 24 часов VIP осталось: <b>{needed}</b>")
     await message.answer(
         "🎁 <b>Получи VIP на 24 часа бесплатно!</b>\n\n"
-        "Приглашай друзей по своей ссылке. За каждые <b>3 друга</b> тебе автоматически "
-        "выдается <b>VIP на 24 часа</b> (до 3 раз)!\n\n"
-        f"🔗 <b>Твоя реферальная ссылка:</b>\n<code>{ref_link}</code>\n\n{status}",
+        "Приглашай друзей. За каждые <b>3 друга</b> — VIP на 24 часа (до 3 раз)!\n\n"
+        f"🔗 <b>Твоя ссылка:</b>\n<code>{ref_link}</code>\n\n{status}",
         reply_markup=get_restart_inline_keyboard())
 
 
@@ -1000,13 +993,12 @@ async def admin_broadcast_send(message: Message, state: FSMContext, bot: Bot):
     task = asyncio.create_task(run_broadcast(bot, message.chat.id, message.message_id))
     BG_TASKS.add(task)
     task.add_done_callback(BG_TASKS.discard)
-    await message.answer("🚀 Рассылка запущена, отчёт придёт по завершении.")
+    await message.answer("🚀 Рассылка запущена.")
 
 
 @private_router.message(F.text)
 async def private_fallback(message: Message):
-    await message.answer("ℹ️ Пожалуйста, используй кнопку <b>«📥 Скачать медиа»</b> в меню, "
-                         "чтобы начать процесс скачивания.")
+    await message.answer("ℹ️ Используй кнопку <b>«📥 Скачать медиа»</b> в меню.")
 
 
 group_router = Router(name="group")
@@ -1023,21 +1015,18 @@ async def bot_added_to_group(event: ChatMemberUpdated, bot: Bot):
     await quiet(bot.send_message(
         event.chat.id,
         "👋 <b>Всем привет! Я PulseFetch.</b>\n\n"
-        "Я готов скачивать видео из TikTok, YouTube, Shorts, Instagram и других платформ.\n"
-        "Просто отправьте ссылку в чат — и я пришлю видео! Больше ничего не нужно.",
+        "Просто отправьте ссылку в чат — и я скачаю видео!",
         reply_markup=kb))
 
 
 @group_router.callback_query(F.data == "g:hint")
 async def group_hint(callback: CallbackQuery):
-    await callback.answer("📎 Просто отправь ссылку на видео в этот чат — "
-                          "я сам её подхвачу и скачаю видео в качестве 720p.", show_alert=True)
+    await callback.answer("📎 Просто отправь ссылку на видео в этот чат.", show_alert=True)
 
 
 @group_router.message(CommandStart(), F.chat.type.in_(GROUPS))
 async def group_start(message: Message):
-    await message.answer("👋 Привет! Я <b>PulseFetch</b> — бот для скачивания медиа. "
-                         "Просто отправь ссылку на видео в этот чат, и я скачаю его автоматически!")
+    await message.answer("👋 Привет! Я <b>PulseFetch</b>. Просто отправь ссылку на видео!")
 
 
 @group_router.message(F.chat.type.in_(GROUPS), F.text | F.caption)
