@@ -29,7 +29,6 @@ BOT_USERNAME = "pulsefetch_bot"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- СОСТОЯНИЯ ФСМ ---
 class DownloadStates(StatesGroup):
     waiting_for_link = State()
     waiting_for_format = State()
@@ -68,7 +67,6 @@ def get_restart_inline_keyboard():
 
 waiting_for_broadcast = set()
 
-# --- 1. СТАРТ ---
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
@@ -106,7 +104,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
     
     await message.answer(welcome_text, reply_markup=get_main_keyboard(is_vip), parse_mode=ParseMode.MARKDOWN)
 
-# --- КНОПКА ПЕРЕЗАПУСКА ЧЕРЕЗ МЕНЮ ---
 @dp.message(F.text == "🔄 Перезапустить бота")
 async def restart_button_handler(message: types.Message, state: FSMContext):
     await state.clear()
@@ -118,7 +115,6 @@ async def restart_button_handler(message: types.Message, state: FSMContext):
     )
     await message.answer(welcome_text, reply_markup=get_main_keyboard(is_vip), parse_mode=ParseMode.MARKDOWN)
 
-# --- 2. ПРАВИЛА ---
 @dp.message(F.text == "ℹ️ О боте и правилах")
 async def about_bot_handler(message: types.Message, state: FSMContext):
     await state.clear()
@@ -134,7 +130,6 @@ async def about_bot_handler(message: types.Message, state: FSMContext):
     )
     await message.answer(info_text, reply_markup=get_restart_inline_keyboard(), parse_mode=ParseMode.MARKDOWN)
 
-# --- 3. ШАГ 1: ВЫБОР ПЛАТФОРМЫ ---
 @dp.message(F.text == "📥 Скачать медиа")
 async def choose_platform_menu(message: types.Message, state: FSMContext):
     await state.clear()
@@ -206,8 +201,6 @@ async def back_to_platforms(callback: types.CallbackQuery, state: FSMContext):
         reply_markup=platforms_kb,
         parse_mode=ParseMode.MARKDOWN
     )
-
-# --- 4. ШАГ 2: ПРОВЕРКА ССЫЛКИ ---
 @dp.message(DownloadStates.waiting_for_link, F.text)
 async def process_link_received(message: types.Message, state: FSMContext):
     url = message.text.strip()
@@ -253,7 +246,6 @@ async def process_link_received(message: types.Message, state: FSMContext):
         parse_mode=ParseMode.MARKDOWN
     )
 
-# --- 5. СКАЧИВАНИЕ ---
 @dp.callback_query(DownloadStates.waiting_for_format, F.data.startswith("fmt_"))
 async def process_format_choice(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
@@ -387,7 +379,6 @@ def download_selected_media(url: str, base_filename: str, is_vip: int, action: s
         except Exception as e:
             logging.error(f"Ошибка скачивания аудио: {e}")
 
-# --- 6. РЕФЕРАЛКА, ПОКУПКА, АДМИНКА ---
 @dp.message(F.text == "🎁 Бесплатный VIP за друзей")
 async def referral_menu(message: types.Message, state: FSMContext):
     await state.clear()
@@ -462,4 +453,66 @@ async def admin_toggle_maint(message: types.Message):
 @dp.message(F.text == "📢 Сделать рассылку")
 async def admin_broadcast(message: types.Message):
     if message.from_user.id != ADMIN_ID:
+        return
+    waiting_for_broadcast.add(ADMIN_ID)
+    await message.answer("✍️ Отправь текст для рассылки всем пользователям:")
+
+@dp.message(F.text == "⬅️ Обычное меню")
+async def normal_menu(message: types.Message, state: FSMContext):
+    await state.clear()
+    if message.from_user.id == ADMIN_ID:
+        is_vip = check_vip_status_expiration(message.from_user.id, ADMIN_ID)
+        await message.answer("Перешли в обычное меню", reply_markup=get_main_keyboard(is_vip))
+
+@dp.callback_query(F.data == "restart_bot")
+async def callback_restart(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.answer("🔄 Бот перезапущен!")
+    is_vip = check_vip_status_expiration(callback.from_user.id, ADMIN_ID)
+    restart_text = (
+        f"⚡️ **Главное меню PulseFetch**\n\n"
+        f"Нажми кнопку **«📥 Скачать медиа»**, чтобы выбрать платформу!"
+    )
+    await callback.message.answer(restart_text, reply_markup=get_main_keyboard(is_vip), parse_mode=ParseMode.MARKDOWN)
+
+@dp.callback_query(F.data == "buy_vip_prompt")
+async def callback_buy_vip(callback: types.CallbackQuery):
+    await callback.answer()
+    prices = [LabeledPrice(label="VIP Подписка (1 месяц)", amount=100)]
+    await callback.message.answer_invoice(
+        title="🌟 VIP-статус для PulseFetch",
+        description="Снятие водяных знаков, доступ к 2K/4K качеству и полное отключение рекламы на 30 дней!",
+        prices=prices,
+        payload="vip_subscription_30_days",
+        currency="XTR",
+        provider_token=""
+    )
+
+@dp.message(F.text)
+async def handle_text_broadcast(message: types.Message, state: FSMContext):
+    if message.from_user.id == ADMIN_ID and ADMIN_ID in waiting_for_broadcast:
+        waiting_for_broadcast.remove(ADMIN_ID)
+        users = db_get_all_users()
+        success = 0
+        for uid in users:
+            try:
+                await message.copy_to(chat_id=uid)
+                success += 1
+                await asyncio.sleep(0.05)
+            except:
+                pass
+        await message.answer(f"✅ Рассылка завершена. Успешно: {success}/{len(users)}")
+        return
+    
+    if get_maintenance_mode() == 'on' and message.from_user.id != ADMIN_ID:
+        await message.answer("🛠 Бот на техобслуживании.")
+        return
         
+    await message.answer("ℹ️ Пожалуйста, используй кнопку **«📥 Скачать медиа»** в меню, чтобы начать процесс скачивания.", parse_mode=ParseMode.MARKDOWN)
+
+async def main():
+    print("Бот PulseFetch запущен и готов к работе!")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
