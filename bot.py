@@ -1,832 +1,444 @@
-# -*- coding: utf-8 -*-
-"""PulseFetch — Telegram-бот для скачивания медиа."""
-import asyncio
-import html
-import json
-import logging
+# ==========================================
+# ЧАСТЬ 1: БАЗА ДАННЫХ (SQLite)
+# ==========================================
 import os
-import re
-import shutil
-import tempfile
-import threading
-import time
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional
-
-import aiohttp
+import asyncio
+import logging
+import sqlite3
 import yt_dlp
-from aiohttp import web
-
-# ===== 1. МГНОВЕННЫЙ ЗАПУСК ВЕБ-СЕРВЕРА ДЛЯ RENDER =====
-async def handle_ping(request):
-    return web.Response(text="Bot is running!")
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", handle_ping)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get("PORT", 10000))
-    await web.TCPSite(runner, "0.0.0.0", port).start()
-    print(f"WEB SERVER STARTED ON PORT {port}")
-
-try:
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
-        asyncio.create_task(start_web_server())
-    else:
-        loop.run_until_complete(start_web_server())
-except Exception:
-    pass
-# =======================================================
-
-from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
-from aiogram.client.default import DefaultBotProperties
-from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.enums import ChatType, ParseMode
-from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
-from aiogram.filters import CommandObject, CommandStart
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.filters import Command, CommandStart
+from aiogram.types import (
+    ReplyKeyboardMarkup, KeyboardButton, 
+    InlineKeyboardMarkup, InlineKeyboardButton, 
+    FSInputFile
+)
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import (CallbackQuery, FSInputFile,
-                           InlineKeyboardButton, InlineKeyboardMarkup,
-                           Message, PreCheckoutQuery, ReplyParameters)
-from aiogram.utils.chat_action import ChatActionSender
 
-from database import (
-    init_db, db_add_user, check_vip_status_expiration,
-    db_get_user_info, db_get_all_users,
-    db_get_user_language, db_set_user_language, db_get_user_reg_date
-)
+DB_NAME = "bot_database.db"
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise SystemExit("❌ Ошибка: не найден BOT_TOKEN в настройках Render!")
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            language TEXT DEFAULT 'ru',
+            is_vip INTEGER DEFAULT 0,
+            vip_until TEXT DEFAULT NULL,
+            download_count INTEGER DEFAULT 0,
+            referrals_count INTEGER DEFAULT 0,
+            bonus_received INTEGER DEFAULT 0,
+            referred_by INTEGER DEFAULT NULL
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def get_user(user_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    user = cursor.fetchone()
+    conn.close()
+    return user
+
+def add_user(user_id, username=None, referred_by=None):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+    if not cursor.fetchone():
+        cursor.execute(
+            "INSERT INTO users (user_id, username, referred_by) VALUES (?, ?, ?)",
+            (user_id, username, referred_by)
+        )
+        if referred_by and referred_by != user_id:
+            cursor.execute("UPDATE users SET referrals_count = referrals_count + 1 WHERE user_id = ?", (referred_by,))
+        conn.commit()
+    conn.close()
+
+def set_user_language(user_id, lang):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET language = ? WHERE user_id = ?", (lang, user_id))
+    conn.commit()
+    conn.close()
+
+def increment_downloads(user_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET download_count = download_count + 1 WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+def get_all_users_count():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM users")
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+def get_all_user_ids():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users")
+    ids = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return ids
+
+# Инициализируем БД при старте
+init_db()
+# ==========================================
+# ЧАСТЬ 2: КЛАВИАТУРЫ И МЕНЮ
+# ==========================================
+
+def get_main_keyboard():
+    kb = [
+        [KeyboardButton(text="📥 Скачать медиа")],
+        [KeyboardButton(text="👤 Мой профиль"), KeyboardButton(text="⚙️ Настройки")],
+        [KeyboardButton(text="🎁 Бесплатный VIP за друзей")],
+        [KeyboardButton(text="ℹ️ О боте и правилах"), KeyboardButton(text="🔄 Перезапустить бота")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+
+def get_platforms_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🎵 TikTok", callback_data="plat_tiktok"),
+            InlineKeyboardButton(text="📺 YouTube / Shorts", callback_data="plat_youtube")
+        ],
+        [InlineKeyboardButton(text="📸✨ Instagram Reels", callback_data="plat_instagram")],
+        [InlineKeyboardButton(text="🌐 Другие платформы", callback_data="plat_other")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_download")]
+    ])
+
+def get_settings_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🌐 Сменить язык / Change Language", callback_data="change_lang")],
+        [InlineKeyboardButton(text="📖 Гайд по использованию", callback_data="show_guide")]
+    ])
+
+def get_languages_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🇷🇺 Русский", callback_data="setlang_ru"),
+            InlineKeyboardButton(text="🇺🇦 Українська", callback_data="setlang_ua"),
+            InlineKeyboardButton(text="🇬🇧 English", callback_data="setlang_en")
+        ],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_settings")]
+    ])
+
+def get_profile_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎁 Продлить / Получить VIP", callback_data="buy_vip")],
+        [InlineKeyboardButton(text="⭐ Купить Stars", callback_data="buy_stars")]
+    ])
+
+def get_back_to_menu_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="back_to_menu")]
+    ])
+
+def get_admin_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Сделать рассылку", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="📊 Полная статистика", callback_data="admin_stats")]
+    ])
+# ==========================================
+# ЧАСТЬ 3: МОДУЛЬ ЗАГРУЗКИ (yt-dlp)
+# ==========================================
+
+async def download_media(url: str, user_id: int) -> str:
+    os.makedirs("downloads", exist_ok=True)
+    
+    ydl_opts = {
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'outtmpl': f'downloads/{user_id}_%(id)s.%(ext)s',
+        'max_filesize': 50 * 1024 * 1024,  # Лимит 50 МБ
+        'quiet': True,
+        'no_warnings': True
+    }
+
+    loop = asyncio.get_event_loop()
+
+    def _extract():
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            return ydl.prepare_filename(info)
+
+    filename = await loop.run_in_executor(None, _extract)
+    return filename
+# ==========================================
+# ЧАСТЬ 4: ЛОГИКА БОТА И ХЭНДЛЕРЫ
+# ==========================================
 
 ADMIN_ID = 6444735646
-BOT_USERNAME = os.getenv("BOT_USERNAME", "pulsefetch_bot")
-PROXY_URL = os.getenv("PROXY_URL", "").strip()
-LOCAL_API_URL = os.getenv("LOCAL_API_URL", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-TG_CAP_MB = 2000 if LOCAL_API_URL else 50
-FREE_LIMIT_MB = min(500, TG_CAP_MB)
-VIP_LIMIT_MB = min(2000, TG_CAP_MB)
-FREE_HEIGHTS = [720, 480, 360]
-VIP_HEIGHTS = [0, 1080, 720, 480, 360]
-MAX_PARALLEL = int(os.getenv("MAX_PARALLEL", "3"))
-DOWNLOAD_TIMEOUT = 900
-FFMPEG_TIMEOUT = 900
+bot = Bot(token=BOT_TOKEN if BOT_TOKEN else "DUMMY_TOKEN")
+dp = Dispatcher(storage=MemoryStorage())
+logging.basicConfig(level=logging.INFO)
 
-GROUPS = {ChatType.GROUP, ChatType.SUPERGROUP}
-URL_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
-GROUP_HOSTS = (
-    "tiktok.com", "youtube.com", "youtu.be", "instagram.com", "instagr.am",
-    "twitter.com", "x.com", "facebook.com", "fb.watch", "pinterest.com", "pin.it",
-    "vk.com", "vkvideo.ru", "reddit.com", "likee.video", "snapchat.com",
-    "twitch.tv", "vimeo.com", "dailymotion.com", "threads.net", "soundcloud.com",
-)
-
-UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
-HEADERS = {
-    "User-Agent": UA,
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-    "Sec-Fetch-Dest": "document",
-}
-
-YT_CLIENTS = ["ios", "android", "mweb", "tv", "web_safari", "web"]
-VIDEO_EXT = (".mp4", ".mkv", ".webm", ".mov", ".m4v")
-AUDIO_SRC_EXT = (".m4a", ".mp3", ".opus", ".webm", ".ogg", ".aac", ".mp4", ".wav", ".flac")
-
-LANGS = {
-    "ru": {
-        "download": "📥 Скачать медиа",
-        "profile": "👤 Мой профиль",
-        "vip_active": "🌟 VIP Статус (Активен)",
-        "vip_buy": "💎 Купить VIP",
-        "ref": "🎁 Рефералы",
-        "settings": "⚙️ Настройки",
-        "about": "ℹ️ О боте",
-        "welcome": "👋 <b>Привет, {name}!</b>\n\nЯ универсальный бот <b>PulseFetch</b>.\n\n📌 <b>Твой тариф:</b> {tariff}\n\n👇 Выбери действие ниже:",
-        "choose_platform": "📂 <b>Шаг 1 из 2:</b> Выбери платформу:",
-        "settings_title": "⚙️ <b>Настройки бота</b>\n\nВыбери язык интерфейса:",
-        "lang_changed": "✅ Язык успешно изменен на Русский!",
-        "profile_text": "👤 <b>Твой профиль:</b>\n\n🆔 ID: <code>{uid}</code>\n👤 Имя: <b>{name}</b>\n🌟 Тариф: <b>{tariff}</b>\n📅 Регистрация: <b>{reg_date}</b>\n\n👥 Друзей: <b>{refs}</b>\n🎁 Бонусов: <b>{claimed} из 3</b>",
-    },
-    "uk": {
-        "download": "📥 Завантажити медіа",
-        "profile": "👤 Мій профіль",
-        "vip_active": "🌟 VIP Статус (Активний)",
-        "vip_buy": "💎 Купити VIP",
-        "ref": "🎁 Реферали",
-        "settings": "⚙️ Налаштування",
-        "about": "ℹ️ Про бота",
-        "welcome": "👋 <b>Привіт, {name}!</b>\n\nЯ універсальний бот <b>PulseFetch</b>.\n\n📌 <b>Твій тариф:</b> {tariff}\n\n👇 Вибери дію нижче:",
-        "choose_platform": "📂 <b>Крок 1 із 2:</b> Вибери платформу:",
-        "settings_title": "⚙️ <b>Налаштування бота</b>\n\nВибери мову інтерфейсу:",
-        "lang_changed": "✅ Мову успішно змінено на Українську!",
-        "profile_text": "👤 <b>Твій профіль:</b>\n\n🆔 ID: <code>{uid}</code>\n👤 Ім'я: <b>{name}</b>\n🌟 Тариф: <b>{tariff}</b>\n📅 Реєстрація: <b>{reg_date}</b>\n\n👥 Друзей: <b>{refs}</b>\n🎁 Бонусів: <b>{claimed} з 3</b>",
-    }
-}
-
-def t(user_id: int, key: str, **kwargs) -> str:
-    lang = db_get_user_language(user_id) or "ru"
-    text = LANGS.get(lang, LANGS["ru"]).get(key, LANGS["ru"].get(key, key))
-    if kwargs:
-        try:
-            return text.format(**kwargs)
-        except Exception:
-            return text
-    return text
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
-log = logging.getLogger("pulsefetch")
-
-DL_SEM = asyncio.Semaphore(MAX_PARALLEL)
-IN_FLIGHT: set = set()
-BG_TASKS: set = set()
-_last_action: dict = {}
-
-def fmt_limit(mb: int) -> str:
-    return f"{mb // 1000} ГБ" if mb >= 1000 else f"{mb} МБ"
-
-def esc(s) -> str:
-    return html.escape(str(s or ""))
-
-async def quiet(coro):
-    try:
-        return await coro
-    except Exception:
-        return None
-
-def cooldown(uid: int, sec: float) -> bool:
-    now = time.monotonic()
-    if now - _last_action.get(uid, 0) < sec:
-        return False
-    _last_action[uid] = now
-    return True
-
-def extract_urls(message: Message) -> list:
-    text = message.text or message.caption or ""
-    entities = message.entities or message.caption_entities or []
-    found = []
-    for e in entities:
-        if e.type == "url":
-            found.append(e.extract_from(text))
-        elif e.type == "text_link" and e.url:
-            found.append(e.url)
-    found += URL_RE.findall(text)
-    out, seen = [], set()
-    for u in found:
-        u = u.strip().rstrip(".,;:!?)»]}>\"'")
-        if u.lower().startswith(("http://", "https://")) and u not in seen:
-            seen.add(u)
-            out.append(u)
-    return out
-
-def host_supported(url: str) -> bool:
-    m = re.match(r"https?://([^/:?#]+)", url, re.I)
-    if not m:
-        return False
-    host = m.group(1).lower()
-    return any(host == h or host.endswith("." + h) for h in GROUP_HOSTS)
-
-def get_vip(user_id: int) -> bool:
-    try:
-        return bool(check_vip_status_expiration(user_id, ADMIN_ID))
-    except Exception:
-        return False
-
-async def safe_exit(msg, text: str, markup=None):
-    try:
-        await msg.edit_text(text, reply_markup=markup, parse_mode=ParseMode.HTML)
-    except Exception:
-        try:
-            await msg.answer(text, reply_markup=markup, parse_mode=ParseMode.HTML)
-        except Exception:
-            pass
-# ===== 2. УСИЛЕННЫЙ МОДУЛЬ СКАЧИВАНИЯ =====
-class MediaError(Exception):
-    pass
-
-class DownloadCancelled(Exception):
-    pass
-
-@dataclass
-class Result:
-    tmpdir: Path
-    title: str = "Media"
-    video: Optional[Path] = None
-    audio: Optional[Path] = None
-    width: int = 0
-    height: int = 0
-    duration: int = 0
-
-def build_format(h: int) -> str:
-    if h == 0:
-        return "bv*[vcodec^=avc1]+ba[acodec^=mp4a]/bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b"
-    f = f"[height<=?{h}]"
-    return (f"bv*{f}[vcodec^=avc1]+ba[acodec^=mp4a]/bv*{f}[ext=mp4]+ba[ext=m4a]/"
-            f"b{f}[ext=mp4]/bv*{f}+ba/b{f}")
-
-def _ydl_opts(tmp: Path, fmt: str, cancel: threading.Event, use_clients: bool, limit: int, *, use_cookies: bool = True, extra_headers: dict | None = None, impersonate: bool | str = False) -> dict:
-    def hook(_d):
-        if cancel.is_set():
-            raise DownloadCancelled()
-
-    headers = dict(HEADERS)
-    if extra_headers:
-        headers.update(extra_headers)
-
-    opts = {
-        "format": fmt,
-        "outtmpl": str(tmp / "%(id).60B.%(ext)s"),
-        "merge_output_format": "mp4",
-        "noplaylist": True,
-        "playlist_items": "1",
-        "quiet": True,
-        "no_warnings": True,
-        "noprogress": True,
-        "restrictfilenames": True,
-        "retries": 15,
-        "fragment_retries": 15,
-        "extractor_retries": 10,
-        "file_access_retries": 5,
-        "socket_timeout": 60,
-        "concurrent_fragment_downloads": 4,
-        "geo_bypass": True,
-        "http_headers": headers,
-        "progress_hooks": [hook],
-        "max_filesize": limit,
-        "overwrites": True,
-        "legacy_server_connect": True,
-        "nocheckcertificate": True,
-    }
-
-    if PROXY_URL:
-        opts["proxy"] = PROXY_URL
-
-    if use_clients:
-        opts["extractor_args"] = {
-            "youtube": {
-                "player_client": YT_CLIENTS,
-                "player_skip": ["webpage", "configs"],
-            }
-        }
-
-    if use_cookies:
-        base_dir = Path(__file__).resolve().parent
-        cookie_path = base_dir / "cookies.txt"
-        if cookie_path.is_file():
-            opts["cookiefile"] = str(cookie_path)
-        else:
-            alt_path = Path("cookies.txt")
-            if alt_path.is_file():
-                opts["cookiefile"] = str(alt_path.resolve())
-
-    if impersonate:
-        opts["impersonate"] = impersonate
-
-    return opts
-
-async def _download_via_invidious_api(url: str, tmp: Path) -> Optional[dict]:
-    match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", url)
-    if not match:
-        return None
-    video_id = match.group(1)
-    
-    instances = [
-        "https://invidious.privacyredirect.com",
-        "https://vid.puffyan.us",
-        "https://inv.nadeko.net",
-        "https://invidious.nerdvpn.de"
-    ]
-    
-    async with aiohttp.ClientSession() as session:
-        for host in instances:
-            try:
-                api_url = f"{host}/api/v1/videos/{video_id}"
-                async with session.get(api_url, timeout=10) as resp:
-                    if resp.status != 200:
-                        continue
-                    data = await resp.json()
-                    adaptive_formats = data.get("adaptiveFormats", [])
-                    video_url = next((f.get("url") for f in adaptive_formats if f.get("type", "").startswith("video/mp4") and f.get("qualityLabel") in ("720p", "360p")), None)
-                    if not video_url:
-                        continue
-                    
-                    out_file = tmp / f"{video_id}.mp4"
-                    async with session.get(video_url, timeout=60) as v_resp:
-                        if v_resp.status == 200:
-                            with open(out_file, "wb") as f:
-                                f.write(await v_resp.read())
-                            if out_file.exists() and out_file.stat().st_size > 0:
-                                return {"title": data.get("title", "YouTube Video"), "filepath": out_file}
-            except Exception:
-                continue
-    return None
-
-def _download_sync(url: str, tmp: Path, fmt: str, cancel: threading.Event, limit: int):
-    last_err: Optional[Exception] = None
-    low = url.lower()
-
-    clean_url = url.split('?')[0].split('&')[0]
-    if "youtube.com" in low or "youtu.be" in low:
-        url = clean_url
-
-    is_tiktok = any(h in low for h in ("tiktok.com", "vt.tiktok.com", "vm.tiktok.com"))
-    is_youtube = any(h in low for h in ("youtube.com", "youtu.be"))
-    is_instagram = any(h in low for h in ("instagram.com", "instagr.am"))
-
-    if is_youtube:
-        strategies = [
-            {"use_clients": True,  "use_cookies": True,  "impersonate": False, "clients": ["ios", "android", "mweb"]},
-            {"use_clients": True,  "use_cookies": True,  "impersonate": False, "clients": ["tv", "web_safari"]},
-            {"use_clients": True,  "use_cookies": False, "impersonate": False, "clients": ["ios", "android"]},
-            {"use_clients": False, "use_cookies": True,  "impersonate": "chrome", "clients": None},
-            {"use_clients": False, "use_cookies": True,  "impersonate": False, "clients": None},
-        ]
-    elif is_tiktok or is_instagram:
-        strategies = [
-            {"use_clients": False, "use_cookies": True,  "impersonate": "chrome", "clients": None},
-            {"use_clients": False, "use_cookies": False, "impersonate": "chrome", "clients": None},
-        ]
-    else:
-        strategies = [
-            {"use_clients": False, "use_cookies": True,  "impersonate": "chrome", "clients": None},
-        ]
-
-    extra_headers = None
-    if is_tiktok:
-        extra_headers = {"Referer": "https://www.tiktok.com/", "Origin": "https://www.tiktok.com"}
-    elif is_instagram:
-        extra_headers = {"Referer": "https://www.instagram.com/", "Origin": "https://www.instagram.com"}
-
-    for strat in strategies:
-        original_clients = YT_CLIENTS[:]
-        try:
-            if strat.get("clients"):
-                globals()["YT_CLIENTS"] = strat["clients"]
-
-            opts = _ydl_opts(
-                tmp, fmt, cancel,
-                use_clients=strat["use_clients"],
-                limit=limit,
-                use_cookies=strat["use_cookies"],
-                extra_headers=extra_headers,
-                impersonate=strat["impersonate"],
-            )
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-
-            globals()["YT_CLIENTS"] = original_clients
-
-            if info and "entries" in info:
-                entries = [e for e in (info.get("entries") or []) if e]
-                info = entries[0] if entries else None
-            return info
-
-        except DownloadCancelled:
-            raise
-        except Exception as e:
-            last_err = e
-            globals()["YT_CLIENTS"] = original_clients
-            log.warning("yt-dlp failed (strat=%s): %s", strat, str(e)[:300])
-            _clear(tmp)
-
-    raise MediaError(str(last_err) if last_err else "download failed")
-
-def _find_file(tmp: Path, exts: tuple) -> Optional[Path]:
-    files = [p for p in tmp.iterdir() if p.is_file() and p.suffix.lower() in exts and not p.name.endswith((".part", ".ytdl")) and p.stat().st_size > 0]
-    return max(files, key=lambda p: p.stat().st_size) if files else None
-
-async def _run(*cmd, timeout: int):
-    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        raise MediaError("ffmpeg: таймаут")
-    return proc.returncode, out, err
-
-async def _probe(path: Path) -> Optional[dict]:
-    try:
-        rc, out, _ = await _run("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-show_format", str(path), timeout=60)
-        if rc != 0:
-            return None
-        data = json.loads(out.decode() or "{}")
-    except Exception:
-        return None
-    v = next((s for s in data.get("streams", []) if s.get("codec_type") == "video"), None)
-    a = next((s for s in data.get("streams", []) if s.get("codec_type") == "audio"), None)
-    if not v:
-        return None
-    try:
-        dur = int(float(data.get("format", {}).get("duration") or v.get("duration") or 0))
-    except ValueError:
-        dur = 0
-    return {"vcodec": v.get("codec_name"), "acodec": a.get("codec_name") if a else None, "w": int(v.get("width") or 0), "h": int(v.get("height") or 0), "dur": dur}
-
-async def _normalize(src: Path, tmp: Path, max_h: int, add_watermark: bool = False) -> Path:
-    info = await _probe(src)
-    if not info:
-        raise MediaError("в файле нет видеопотока")
-    out = tmp / "final.mp4"
-    need_scale = bool(max_h) and info["h"] > max_h
-
-    vf_parts = []
-    if need_scale:
-        vf_parts.append(f"scale=-2:{max_h}")
-    else:
-        vf_parts.append("scale=trunc(iw/2)*2:trunc(ih/2)*2")
-
-    if add_watermark:
-        watermark_text = f"Скачано через @{BOT_USERNAME}"
-        drawtext = f"drawtext=text='{watermark_text}':fontsize=18:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:box=1:boxcolor=black@0.4:boxborderw=6"
-        vf_parts.append(drawtext)
-
-    vf = ",".join(vf_parts)
-
-    if info["vcodec"] == "h264" and info["acodec"] in (None, "aac") and not need_scale and not add_watermark:
-        rc, _, _ = await _run("ffmpeg", "-y", "-v", "error", "-i", str(src), "-c", "copy", "-movflags", "+faststart", str(out), timeout=FFMPEG_TIMEOUT)
-        if rc == 0 and out.exists() and out.stat().st_size > 0:
-            if src != out:
-                src.unlink(missing_ok=True)
-            return out
-
-    rc, _, err = await _run("ffmpeg", "-y", "-v", "error", "-i", str(src), "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out), timeout=FFMPEG_TIMEOUT)
-    if rc != 0 or not out.exists() or out.stat().st_size == 0:
-        raise MediaError("ffmpeg: " + err.decode(errors="ignore")[-200:])
-
-    if src != out:
-        src.unlink(missing_ok=True)
-    return out
-
-async def _to_mp3(src: Path, tmp: Path, limit: int) -> Path:
-    for br in (192, 128, 64):
-        out = tmp / f"audio_{br}.mp3"
-        rc, _, err = await _run("ffmpeg", "-y", "-v", "error", "-i", str(src), "-vn", "-c:a", "libmp3lame", "-b:a", f"{br}k", str(out), timeout=FFMPEG_TIMEOUT)
-        if rc != 0 or not out.exists() or out.stat().st_size == 0:
-            raise MediaError("ffmpeg: не удалось получить аудио")
-        if out.stat().st_size <= limit:
-            return out
-    raise MediaError("слишком большой файл")
-
-def _clear(tmp: Path):
-    for f in tmp.iterdir():
-        if f.is_file():
-            f.unlink(missing_ok=True)
-
-async def fetch_media(url: str, heights: list, want_video: bool, want_audio: bool, limit: int, add_watermark: bool = False) -> Result:
-    tmp = Path(await asyncio.to_thread(tempfile.mkdtemp, prefix="pf_"))
-    res = Result(tmpdir=tmp)
-    cancel = threading.Event()
-    low = url.lower()
-    is_youtube = any(h in low for h in ("youtube.com", "youtu.be"))
-
-    try:
-        success = False
-        last_err = None
-        if want_video:
-            for h in heights:
-                _clear(tmp)
-                try:
-                    info = await asyncio.wait_for(asyncio.to_thread(_download_sync, url, tmp, build_format(h), cancel, limit), DOWNLOAD_TIMEOUT)
-                    src = _find_file(tmp, VIDEO_EXT)
-                    if not src:
-                        raise MediaError("слишком большой файл")
-                    final = await _normalize(src, tmp, h, add_watermark=add_watermark)
-                    if final.stat().st_size > limit:
-                        raise MediaError("слишком большой файл")
-                    meta = await _probe(final) or {"w": 0, "h": 0, "dur": 0}
-                    res.video, res.title = final, (info or {}).get("title") or "Media"
-                    res.width, res.height, res.duration = meta["w"], meta["h"], meta["dur"]
-                    success = True
-                    break
-                except Exception as e:
-                    last_err = e
-                    continue
-        
-        if not success and is_youtube and want_video:
-            _clear(tmp)
-            api_data = await _download_via_invidious_api(url, tmp)
-            if api_data:
-                src = api_data["filepath"]
-                final = await _normalize(src, tmp, heights[0] if heights else 720, add_watermark=add_watermark)
-                meta = await _probe(final) or {"w": 0, "h": 0, "dur": 0}
-                res.video, res.title = final, api_data["title"]
-                res.width, res.height, res.duration = meta["w"], meta["h"], meta["dur"]
-                success = True
-
-        if not success and not res.video:
-            raise last_err or MediaError("не удалось скачать")
-
-        if want_audio and res.video:
-            try:
-                res.audio = await _to_mp3(res.video, tmp, limit)
-            except Exception:
-                pass
-
-        return res
-    except BaseException:
-        shutil.rmtree(tmp, ignore_errors=True)
-        raise
-
-def friendly_error(e: Exception, limit_mb: int) -> str:
-    s = str(e).lower()
-    if "слишком большой" in s:
-        return f"📦 Файл слишком большой для отправки (лимит {fmt_limit(limit_mb)})."
-    if any(k in s for k in ("private", "login", "sign in", "cookies", "age", "authentication", "bot")):
-        return "🔒 YouTube заблокировал IP дата-центра Render. Проверь cookies.txt."
-    if any(k in s for k in ("unsupported url", "no video")):
-        return "🤷 В этой ссылке не нашлось медиа."
-    return "❌ Не удалось скачать медиа. Проверьте ссылку."
-
-async def _retry_send(factory):
-    for _ in range(3):
-        try:
-            return await factory()
-        except TelegramRetryAfter as e:
-            await asyncio.sleep(e.retry_after + 1)
-    raise MediaError("не удалось отправить файл")
-
-async def send_video_file(bot: Bot, chat_id: int, res: Result, caption: str, reply_to: Optional[int], markup):
-    rp = ReplyParameters(message_id=reply_to, allow_sending_without_reply=True) if reply_to else None
-    async def as_video():
-        return await bot.send_video(chat_id, FSInputFile(res.video), caption=caption, width=res.width or None, height=res.height or None, duration=res.duration or None, supports_streaming=True, reply_markup=markup, reply_parameters=rp)
-    async def as_doc():
-        return await bot.send_document(chat_id, FSInputFile(res.video), caption=caption, reply_markup=markup, reply_parameters=rp)
-    try:
-        await _retry_send(as_video)
-    except TelegramBadRequest:
-        await _retry_send(as_doc)
-
-async def send_audio_file(bot: Bot, chat_id: int, res: Result, caption: str, reply_to: Optional[int], markup):
-    rp = ReplyParameters(message_id=reply_to, allow_sending_without_reply=True) if reply_to else None
-    await _retry_send(lambda: bot.send_audio(chat_id, FSInputFile(res.audio), caption=caption, title=res.title[:60], reply_markup=markup, reply_parameters=rp))
-
-async def job(bot: Bot, chat_id: int, user_id: int, url: str, action: str, is_vip: bool, *, reply_to: Optional[int] = None, markup=None, silent: bool = False, status: Optional[Message] = None) -> bool:
-    key = (chat_id, url, action)
-    if key in IN_FLIGHT:
-        if not silent:
-            await quiet(bot.send_message(chat_id, "⏳ Ссылка уже обрабатывается."))
-        return False
-    IN_FLIGHT.add(key)
-    res: Optional[Result] = None
-    limit_mb = VIP_LIMIT_MB if is_vip else FREE_LIMIT_MB
-    tail = f"\n📥 Скачано через @{BOT_USERNAME}"
-    try:
-        async with DL_SEM:
-            async with ChatActionSender.upload_video(bot=bot, chat_id=chat_id):
-                res = await fetch_media(url, VIP_HEIGHTS if is_vip else FREE_HEIGHTS, action in ("video", "both"), action in ("audio", "both"), limit_mb * 1024 * 1024, add_watermark=not is_vip)
-                q = f" {res.height}p" if res.height else ""
-                if res.video:
-                    await send_video_file(bot, chat_id, res, f"🎥 <b>Видео{q}</b>{tail}", reply_to, markup if not res.audio else None)
-                if res.audio:
-                    await send_audio_file(bot, chat_id, res, f"🎵 <b>Аудиодорожка</b>{tail}", reply_to if not res.video else None, markup)
-        return True
-    except Exception as e:
-        if not silent:
-            await quiet(bot.send_message(chat_id, friendly_error(e, limit_mb), reply_markup=markup))
-        return False
-    finally:
-        IN_FLIGHT.discard(key)
-        if res:
-            shutil.rmtree(res.tmpdir, ignore_errors=True)
-        if status:
-            await quiet(status.delete())
-# ===== 3. ИНЛАЙН-ИНТЕРФЕЙС И РОУТЫ =====
-def get_main_inline_keyboard(user_id: int, is_vip: bool) -> InlineKeyboardMarkup:
-    vip_text = "🌟 VIP Статус" if is_vip else "💎 Купить VIP"
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📥 Скачать медиа", callback_data="menu_download"),
-         InlineKeyboardButton(text="👤 Мой профиль", callback_data="menu_profile")],
-        [InlineKeyboardButton(text=vip_text, callback_data="menu_vip")],
-        [InlineKeyboardButton(text="⚙️ Настройки", callback_data="menu_settings"),
-         InlineKeyboardButton(text="ℹ️ О боте", callback_data="menu_about")],
-    ])
-
-def get_restart_inline_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Главное меню", callback_data="restart_bot")]
-    ])
-
-def get_platforms_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎵 TikTok", callback_data="platform_tiktok"),
-         InlineKeyboardButton(text="📺 YouTube / Shorts", callback_data="platform_youtube")],
-        [InlineKeyboardButton(text="📸 Instagram", callback_data="platform_insta"),
-         InlineKeyboardButton(text="🌐 Другие", callback_data="platform_other")],
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="restart_bot")],
-    ])
-
-def get_languages_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru"),
-         InlineKeyboardButton(text="🇺🇦 Українська", callback_data="lang_uk")],
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="restart_bot")]
-    ])
-
-class DownloadStates(StatesGroup):
+class DownloadState(StatesGroup):
     waiting_for_link = State()
-    waiting_for_format = State()
 
-pay_router = Router(name="pay")
-@pay_router.pre_checkout_query()
-async def pre_checkout(q: PreCheckoutQuery):
-    await q.answer(ok=True)
+class AdminState(StatesGroup):
+    waiting_for_broadcast = State()
 
-private_router = Router(name="private")
-private_router.message.filter(F.chat.type == ChatType.PRIVATE)
-private_router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
-
-@private_router.message(CommandStart())
-async def cmd_start(message: Message, command: CommandObject, state: FSMContext, bot: Bot):
-    await state.clear()
-    uid = message.from_user.id
-    db_add_user(uid, message.from_user.username, message.from_user.first_name, None)
-    is_vip = get_vip(uid)
+@dp.message(CommandStart())
+async def start_cmd(message: types.Message):
+    args = message.text.split()
+    ref_id = int(args[1].replace("ref_", "")) if len(args) > 1 and args[1].startswith("ref_") else None
+    
+    add_user(message.from_user.id, message.from_user.username, referred_by=ref_id)
+    
     await message.answer(
-        t(uid, "welcome", name=esc(message.from_user.first_name), tariff="🌟 VIP" if is_vip else "👤 Free"),
-        reply_markup=get_main_inline_keyboard(uid, is_vip)
+        f"👋 Привет, {message.from_user.first_name}!\n\n"
+        "Добро пожаловать в **PulseFetch** — бот для скачивания медиа из TikTok, YouTube, Instagram и других сервисов!\n\n"
+        "Воспользуйся меню ниже для выбора нужного действия 👇",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()
     )
 
-@private_router.callback_query(F.data == "restart_bot")
-async def callback_restart(callback: CallbackQuery, state: FSMContext):
+@dp.message(F.text == "🔄 Перезапустить бота")
+async def restart_cmd(message: types.Message, state: FSMContext):
     await state.clear()
-    await callback.answer()
-    uid = callback.from_user.id
-    is_vip = get_vip(uid)
-    await safe_exit(callback.message, t(uid, "welcome", name=esc(callback.from_user.first_name), tariff="🌟 VIP" if is_vip else "👤 Free"), get_main_inline_keyboard(uid, is_vip))
-
-@private_router.callback_query(F.data == "menu_settings")
-async def callback_settings(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.answer()
-    await safe_exit(callback.message, t(callback.from_user.id, "settings_title"), get_languages_keyboard())
-
-@private_router.callback_query(F.data.startswith("lang_"))
-async def set_lang(callback: CallbackQuery, state: FSMContext):
-    uid = callback.from_user.id
-    db_set_user_language(uid, callback.data.replace("lang_", ""))
-    await callback.answer(t(uid, "lang_changed"), show_alert=True)
-    is_vip = get_vip(uid)
-    await safe_exit(callback.message, t(uid, "welcome", name=esc(callback.from_user.first_name), tariff="🌟 VIP" if is_vip else "👤 Free"), get_main_inline_keyboard(uid, is_vip))
-
-@private_router.callback_query(F.data == "menu_profile")
-async def callback_profile(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.answer()
-    uid = callback.from_user.id
-    refs, claimed = db_get_user_info(uid)
-    await safe_exit(
-        callback.message,
-        t(uid, "profile_text", uid=uid, name=esc(callback.from_user.first_name), tariff="🌟 VIP" if get_vip(uid) else "👤 Free", reg_date=db_get_user_reg_date(uid) or "Неизвестно", refs=refs, claimed=claimed),
-        get_restart_inline_keyboard(uid)
+    await message.answer(
+        "🔄 Бот успешно перезапущен!\n\n👇 Нажми кнопку «📥 Скачать медиа», чтобы выбрать платформу!",
+        reply_markup=get_main_keyboard()
     )
 
-@private_router.callback_query(F.data == "menu_vip")
-async def callback_vip(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    uid = callback.from_user.id
-    await safe_exit(callback.message, "⚡️ <b>VIP Статус</b>\n\nДает возможность качать файлы до 2 ГБ без водяного знака.", get_restart_inline_keyboard(uid))
+@dp.message(F.text == "ℹ️ О боте и правилах")
+async def about_cmd(message: types.Message):
+    text = (
+        "🤖 **О боте PulseFetch:**\n\n"
+        "Бот создан для удобной и быстрой загрузки медиа из TikTok, YouTube, Instagram Reels и других платформ.\n\n"
+        "⚡️ **СРАВНЕНИЕ ТАРИФОВ И ВОЗМОЖНОСТЕЙ**\n\n"
+        "👤 **Обычный тариф (Бесплатно):**\n"
+        "• 📁 Максимальный размер файла: до 50 МБ\n"
+        "• 🎬 Качество видео: до 720p\n"
+        "• 🏷 Водяной знак бота: есть\n\n"
+        "🌟 **VIP Подписка:**\n"
+        "• 📁 Максимальный размер файла: до 50 МБ\n"
+        "• 🎬 Качество видео: максимальное (1080p и выше)\n"
+        "• 🎵 Выгрузка аудиодорожек (MP3)\n"
+        "• 🏷 Водяной знак бота: отсутствует\n\n"
+        "💡 Купи VIP за Stars или получи 24 часа бесплатно за 3 друзей!"
+    )
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_back_to_menu_keyboard())
 
-@private_router.callback_query(F.data == "menu_about")
-async def callback_about(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    uid = callback.from_user.id
-    await safe_exit(callback.message, "ℹ️ <b>О боте PulseFetch</b>\n\nУниверсальный бот для скачивания видео и музыки из TikTok, YouTube, Instagram и других платформ.", get_restart_inline_keyboard(uid))
+@dp.message(F.text == "🎁 Бесплатный VIP за друзей")
+async def ref_cmd(message: types.Message):
+    user = get_user(message.from_user.id)
+    ref_count = user[6] if user else 0
+    bonus_count = user[7] if user else 0
+    left_to_vip = max(0, 3 - (ref_count % 3))
+    bot_info = await bot.get_me()
 
-@private_router.callback_query(F.data == "menu_download")
-async def callback_download(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    uid = callback.from_user.id
-    await safe_exit(callback.message, t(uid, "choose_platform"), get_platforms_keyboard(uid))
+    text = (
+        "🎁 **Получи VIP на 24 часа бесплатно!**\n\n"
+        "Приглашай друзей. За каждые 3 друга — VIP на 24 часа (до 3 раз)!\n\n"
+        f"🔗 **Твоя ссылка:**\nhttps://t.me/{bot_info.username}?start=ref_{message.from_user.id}\n\n"
+        "📊 **Твоя статистика:**\n"
+        f"• Приглашено: {ref_count}\n"
+        f"• Получено бонусов: {bonus_count} из 3\n\n"
+        f"🎯 **До следующих 24 часов VIP осталось:** {left_to_vip}"
+    )
+    await message.answer(text, parse_mode="Markdown")
 
-@private_router.callback_query(F.data.startswith("platform_"))
-async def platform_choice(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.update_data(platform=callback.data.replace("platform_", ""))
-    await state.set_state(DownloadStates.waiting_for_link)
-    await safe_exit(callback.message, "🔗 Отправь ссылку в чат:", InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="menu_download")]]))
+@dp.message(F.text == "👤 Мой профиль")
+async def profile_cmd(message: types.Message):
+    user = get_user(message.from_user.id)
+    downloads = user[5] if user else 0
+    ref_count = user[6] if user else 0
+    is_vip = user[3] if user else 0
+    vip_status = "🌟 VIP-подписка (активна)" if is_vip else "👤 Обычный тариф"
 
-@private_router.message(DownloadStates.waiting_for_link, F.text)
-async def link_received(message: Message, state: FSMContext):
-    urls = extract_urls(message)
-    if not urls:
-        await message.answer("❌ Ссылка не найдена. Попробуй еще раз:")
+    text = (
+        "👤 **Твой профиль**\n\n"
+        f"🆔 **ID:** `{message.from_user.id}`\n"
+        f"👤 **Имя:** {message.from_user.first_name}\n"
+        f"Статус: {vip_status}\n\n"
+        "📊 **Твоя статистика:**\n"
+        f"• 📥 Всего скачано файлов: `{downloads}`\n"
+        f"• 👥 Приглашено друзей: `{ref_count}`\n"
+        "• ⭐️ Баланс Stars: `0 ⭐️`"
+    )
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_profile_keyboard())
+
+@dp.message(F.text == "⚙️ Настройки")
+async def settings_cmd(message: types.Message):
+    user = get_user(message.from_user.id)
+    lang_code = user[2] if user else "ru"
+    lang_map = {"ru": "Русский 🇷🇺", "ua": "Українська 🇺🇦", "en": "English 🇬🇧"}
+    current_lang = lang_map.get(lang_code, "Русский 🇷🇺")
+
+    text = (
+        "⚙️ **Настройки бота**\n\n"
+        "Здесь ты можешь изменить язык интерфейса или посмотреть краткую инструкцию по работе с ботом.\n\n"
+        f"🌐 **Текущий язык:** {current_lang}\n"
+        "📖 **Гайд по использованию:** Доступен ниже\n\n"
+        "👇 Выбери нужный раздел:"
+    )
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_settings_keyboard())
+
+@dp.message(F.text == "📥 Скачать медиа")
+async def choose_platform(message: types.Message):
+    await message.answer(
+        "📁 **Шаг 1 из 2: Выбери платформу, с которой хочешь скачать контент:**",
+        parse_mode="Markdown",
+        reply_markup=get_platforms_keyboard()
+    )
+
+@dp.callback_query(F.data.startswith("plat_"))
+async def platform_selected(callback: types.CallbackQuery, state: FSMContext):
+    platform = callback.data.split("_")[1]
+    await state.update_data(platform=platform)
+    await state.set_state(DownloadState.waiting_for_link)
+    
+    await callback.message.edit_text(
+        "📥 **Шаг 2 из 2: Отправь ссылку на видео или контент**\n\n"
+        "Просто вставь и отправь ссылку в этот чат!",
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "cancel_download")
+async def cancel_download(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("❌ Загрузка отменена.")
+    await callback.answer()
+
+@dp.message(DownloadState.waiting_for_link)
+async def process_download_link(message: types.Message, state: FSMContext):
+    url = message.text.strip()
+    if not url.startswith("http"):
+        await message.answer("⚠️ Пожалуйста, отправь корректную ссылку, начинающуюся с http:// или https://")
         return
-    await state.update_data(url=urls[0])
-    await state.set_state(DownloadStates.waiting_for_format)
-    await message.answer("📦 Выбери формат:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎬 Только видео", callback_data="fmt_video")],
-        [InlineKeyboardButton(text="🎵 Только аудио (MP3)", callback_data="fmt_audio")],
-        [InlineKeyboardButton(text="📦 Всё вместе", callback_data="fmt_both")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_download")],
+
+    status_msg = await message.answer("⏳ **Загрузка медиа... Пожалуйста, подожди.**", parse_mode="Markdown")
+    filename = None
+
+    try:
+        filename = await download_media(url, message.from_user.id)
+        await status_msg.edit_text("🚀 **Отправка файла в чат...**", parse_mode="Markdown")
+        
+        video_file = FSInputFile(filename)
+        await message.answer_video(video=video_file, caption="✅ Ваш контент успешно скачан с помощью @PulseFetchBot!")
+        
+        increment_downloads(message.from_user.id)
+        await status_msg.delete()
+
+    except Exception as e:
+        logging.error(f"Download error: {e}")
+        await status_msg.edit_text("❌ **Ошибка при скачивании.** Убедитесь, что ссылка правильная и видео не превышает 50 МБ.")
+    
+    finally:
+        if filename and os.path.exists(filename):
+            os.remove(filename)
+        await state.clear()
+
+@dp.callback_query(F.data == "change_lang")
+async def change_lang_menu(callback: types.CallbackQuery):
+    await callback.message.edit_text("🌐 **Выбери язык интерфейса / Select interface language:**", parse_mode="Markdown", reply_markup=get_languages_keyboard())
+
+@dp.callback_query(F.data.startswith("setlang_"))
+async def set_language(callback: types.CallbackQuery):
+    lang = callback.data.split("_")[1]
+    set_user_language(callback.from_user.id, lang)
+    
+    lang_names = {"ru": "Русский 🇷🇺", "ua": "Українська 🇺🇦", "en": "English 🇬🇧"}
+    await callback.answer(f"Язык изменен на: {lang_names.get(lang)}")
+    await callback.message.edit_text(f"✅ **Язык успешно изменен на {lang_names.get(lang)}!**", parse_mode="Markdown")
+
+@dp.callback_query(F.data == "show_guide")
+async def show_guide(callback: types.CallbackQuery):
+    text = (
+        "📖 **Как пользоваться ботом PulseFetch:**\n\n"
+        "1️⃣ Нажми кнопку «📥 Скачать медиа» в главном меню.\n"
+        "2️⃣ Выбери нужную платформу (TikTok, YouTube / Shorts, Instagram Reels и др.).\n"
+        "3️⃣ Отправь боту ссылку на видео или пост.\n"
+        "4️⃣ Подожди пару секунд — бот пришлет готовый файл прямо в чат!\n\n"
+        "💡 **Совет:** если у тебя VIP-подписка, видео скачается в максимальном качестве без водяного знака, а также появится возможность скачивать аудиодорожки (MP3)."
+    )
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад в настройки", callback_data="back_to_settings")]
     ]))
 
-@private_router.callback_query(DownloadStates.waiting_for_format, F.data.startswith("fmt_"))
-async def format_choice(callback: CallbackQuery, state: FSMContext, bot: Bot):
+@dp.callback_query(F.data == "back_to_settings")
+async def back_to_settings_handler(callback: types.CallbackQuery):
+    user = get_user(callback.from_user.id)
+    lang_code = user[2] if user else "ru"
+    lang_map = {"ru": "Русский 🇷🇺", "ua": "Українська 🇺🇦", "en": "English 🇬🇧"}
+    
+    text = (
+        "⚙️ **Настройки бота**\n\n"
+        "Здесь ты можешь изменить язык интерфейса или посмотреть краткую инструкцию по работе с ботом.\n\n"
+        f"🌐 **Текущий язык:** {lang_map.get(lang_code, 'Русский 🇷🇺')}\n"
+        "📖 **Гайд по использованию:** Доступен ниже\n\n"
+        "👇 Выбери нужный раздел:"
+    )
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=get_settings_keyboard())
+
+@dp.callback_query(F.data == "back_to_menu")
+async def back_to_menu_handler(callback: types.CallbackQuery):
+    await callback.message.delete()
+    await callback.message.answer("Главное меню:", reply_markup=get_main_keyboard())
+
+@dp.message(Command("admin"))
+async def admin_panel(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    users_count = get_all_users_count()
+    text = (
+        "👑 **Админ-панель управления PulseFetch**\n\n"
+        f"👥 Всего пользователей в базе: `{users_count}`\n\n"
+        "Выбери действие ниже:"
+    )
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_admin_keyboard())
+
+@dp.callback_query(F.data == "admin_broadcast")
+async def start_broadcast(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    await state.set_state(AdminState.waiting_for_broadcast)
+    await callback.message.edit_text("💬 Отправь текст или сообщение, которое необходимо разослать всем пользователям бота:")
     await callback.answer()
-    action = callback.data.replace("fmt_", "")
-    data = await state.get_data()
-    url = data.get("url")
+
+@dp.message(AdminState.waiting_for_broadcast)
+async def process_broadcast(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    user_ids = get_all_user_ids()
+    success = 0
+    failed = 0
+
+    status_msg = await message.answer("🚀 **Рассылка запущена...**", parse_mode="Markdown")
+
+    for uid in user_ids:
+        try:
+            await bot.copy_message(chat_id=uid, from_chat_id=message.chat.id, message_id=message.message_id)
+            success += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed += 1
+
+    await status_msg.edit_text(
+        f"✅ **Рассылка завершена!**\n\n"
+        f"🟢 Успешно доставлено: `{success}`\n"
+        f"🔴 Не доставлено (заблокировали бота): `{failed}`",
+        parse_mode="Markdown"
+    )
     await state.clear()
-    if not url:
-        await safe_exit(callback.message, "❌ Ссылка потеряна.")
-        return
-    uid = callback.from_user.id
-    if not cooldown(uid, 3):
-        await safe_exit(callback.message, "⏳ Подожди пару секунд.")
-        return
-    await safe_exit(callback.message, "🔄 <b>Загружаем... видео обрабатывается</b>")
-    await job(bot, callback.message.chat.id, uid, url, action, get_vip(uid), markup=get_restart_inline_keyboard(uid), status=callback.message)
-
-@private_router.message(F.text)
-async def fallback(message: Message, state: FSMContext):
-    uid = message.from_user.id
-    urls = extract_urls(message)
-    if urls:
-        # Если юзер просто кинул ссылку без меню — сразу переходим к выбору формата
-        await state.update_data(url=urls[0])
-        await state.set_state(DownloadStates.waiting_for_format)
-        await message.answer("📦 Выбери формат:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🎬 Только видео", callback_data="fmt_video")],
-            [InlineKeyboardButton(text="🎵 Только аудио (MP3)", callback_data="fmt_audio")],
-            [InlineKeyboardButton(text="📦 Всё вместе", callback_data="fmt_both")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="restart_bot")],
-        ]))
-    else:
-        is_vip = get_vip(uid)
-        await message.answer("ℹ️ Главное меню:", reply_markup=get_main_inline_keyboard(uid, is_vip))
-# ===== 4. ГРУППЫ И ГЛАВНЫЙ ЦИКЛ MAIN =====
-group_router = Router(name="group")
-@group_router.message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}), F.text | F.caption)
-async def group_scan(message: Message, bot: Bot):
-    if not message.from_user or message.from_user.is_bot:
-        return
-    urls = [u for u in extract_urls(message) if host_supported(u)]
-    if urls and cooldown(message.from_user.id, 4):
-        task = asyncio.create_task(job(bot, message.chat.id, message.from_user.id, urls[0], "video", False, reply_to=message.message_id, silent=True))
-        BG_TASKS.add(task)
-        task.add_done_callback(BG_TASKS.discard)
-
-def cleanup_tmp():
-    try:
-        shutil.rmtree(Path(tempfile.gettempdir()) / "pf_*", ignore_errors=True)
-    except Exception:
-        pass
 
 async def main():
-    global BOT_USERNAME
-    if not BOT_TOKEN:
-        raise SystemExit("Нет BOT_TOKEN")
-    init_db()
-    cleanup_tmp()
-
-    session = AiohttpSession(timeout=900)
-    bot = Bot(BOT_TOKEN, session=session, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    try:
-        me = await bot.me()
-        BOT_USERNAME = me.username or BOT_USERNAME
-
-        dp = Dispatcher(storage=MemoryStorage())
-        dp.include_routers(pay_router, private_router, group_router)
-
-        await bot.delete_webhook(drop_pending_updates=True)
-        log.info("Бот запущен как @%s", BOT_USERNAME)
-
-        async def self_ping():
-            import aiohttp
-            base_url = os.getenv("RENDER_EXTERNAL_URL", "https://pulsefetch-bot.onrender.com")
-            if not base_url.startswith("http"):
-                base_url = "https://" + base_url
-            while True:
-                try:
-                    async with aiohttp.ClientSession() as s:
-                        async with s.get(base_url, timeout=15):
-                            pass
-                    log.info("Self-ping successful")
-                except Exception:
-                    pass
-                await asyncio.sleep(60)
-
-        asyncio.create_task(self_ping())
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
-    finally:
-        for t in list(BG_TASKS):
-            t.cancel()
-        await bot.session.close()
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        pass
+    asyncio.run(main())
