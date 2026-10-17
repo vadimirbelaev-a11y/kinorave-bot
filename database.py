@@ -1,8 +1,6 @@
 import sqlite3
-from datetime import datetime, timedelta
 
-DB_NAME = 'bot_database.db'
-ADMIN_ID = 6444735646
+DB_NAME = "bot_database.db"
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -11,185 +9,66 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
-            first_name TEXT,
-            vip_status INTEGER DEFAULT 0,
-            vip_expires_at TIMESTAMP,
-            invited_by INTEGER,
-            referral_count INTEGER DEFAULT 0,
-            bonuses_claimed INTEGER DEFAULT 0,
-            joined_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            language TEXT DEFAULT 'ru'
+            language TEXT DEFAULT 'ru',
+            is_vip INTEGER DEFAULT 0,
+            vip_until TEXT DEFAULT NULL,
+            download_count INTEGER DEFAULT 0,
+            referrals_count INTEGER DEFAULT 0,
+            bonus_received INTEGER DEFAULT 0,
+            referred_by INTEGER DEFAULT NULL
         )
     ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS referrals (
-            referrer_id INTEGER,
-            referred_id INTEGER PRIMARY KEY
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        )
-    ''')
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('maintenance', 'off')")
-    
-    # Проверяем, есть ли колонка language в старой таблице, если нет — добавляем
-    cursor.execute("PRAGMA table_info(users)")
-    columns = [column[1] for column in cursor.fetchall()]
-    if 'language' not in columns:
-        cursor.execute("ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'ru'")
-
     conn.commit()
     conn.close()
 
-def db_add_user(user_id, username, first_name, referrer_id=None):
+def get_user(user_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    
-    cursor.execute('SELECT user_id, invited_by FROM users WHERE user_id = ?', (user_id,))
-    row = cursor.fetchone()
-    
-    if not row:
-        actual_referrer = None
-        if referrer_id and referrer_id != user_id:
-            cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (referrer_id,))
-            if cursor.fetchone():
-                actual_referrer = referrer_id
+    cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    user = cursor.fetchone()
+    conn.close()
+    return user
 
-        cursor.execute('''
-            INSERT INTO users (user_id, username, first_name, invited_by, vip_status, language) 
-            VALUES (?, ?, ?, ?, 0, 'ru')
-        ''', (user_id, username, first_name, actual_referrer))
-        
-        if actual_referrer:
-            try:
-                cursor.execute('INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)', (actual_referrer, user_id))
-                cursor.execute('UPDATE users SET referral_count = referral_count + 1 WHERE user_id = ?', (actual_referrer,))
-                
-                cursor.execute('SELECT referral_count, bonuses_claimed FROM users WHERE user_id = ?', (actual_referrer,))
-                ref_data = cursor.fetchone()
-                if ref_data:
-                    current_refs, claimed = ref_data[0], ref_data[1]
-                    earned_bonuses = current_refs // 3
-                    
-                    if earned_bonuses > claimed and claimed < 3:
-                        cursor.execute('UPDATE users SET bonuses_claimed = bonuses_claimed + 1 WHERE user_id = ?', (actual_referrer,))
-                        new_exp = datetime.now() + timedelta(hours=24)
-                        cursor.execute('UPDATE users SET vip_status = 1, vip_expires_at = ? WHERE user_id = ?', (new_exp.isoformat(), actual_referrer))
-            except sqlite3.IntegrityError:
-                pass
-
+def add_user(user_id, username=None, referred_by=None):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+    if not cursor.fetchone():
+        cursor.execute(
+            "INSERT INTO users (user_id, username, referred_by) VALUES (?, ?, ?)",
+            (user_id, username, referred_by)
+        )
+        if referred_by and referred_by != user_id:
+            cursor.execute("UPDATE users SET referrals_count = referrals_count + 1 WHERE user_id = ?", (referred_by,))
         conn.commit()
     conn.close()
 
-def check_vip_status_expiration(user_id, admin_id) -> int:
-    if user_id == admin_id:
-        return 1  # Вечный VIP для админа
-    
+def set_user_language(user_id, lang):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute('SELECT vip_status, vip_expires_at FROM users WHERE user_id = ?', (user_id,))
-    res = cursor.fetchone()
-    conn.close()
-    
-    if not res:
-        return 0
-    
-    vip_status, expires_at = res[0], res[1]
-    if vip_status == 1 and expires_at:
-        try:
-            if datetime.now() > datetime.fromisoformat(expires_at):
-                conn = sqlite3.connect(DB_NAME)
-                cursor = conn.cursor()
-                cursor.execute('UPDATE users SET vip_status = 0, vip_expires_at = NULL WHERE user_id = ?', (user_id,))
-                conn.commit()
-                conn.close()
-                return 0
-        except:
-            pass
-    return vip_status
-
-def db_get_user_info(user_id):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('SELECT referral_count, bonuses_claimed FROM users WHERE user_id = ?', (user_id,))
-    res = cursor.fetchone()
-    conn.close()
-    return res if res else (0, 0)
-
-def db_set_user_vip_months(user_id, months=1):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    now = datetime.now()
-    new_exp = now + timedelta(days=30 * months)
-    cursor.execute('UPDATE users SET vip_status = 1, vip_expires_at = ? WHERE user_id = ?', (new_exp.isoformat(), user_id))
+    cursor.execute("UPDATE users SET language = ? WHERE user_id = ?", (lang, user_id))
     conn.commit()
     conn.close()
 
-# --- Новые функции для работы с языком (чтобы бот не падал) ---
-def db_get_user_language(user_id: int) -> str:
+def increment_downloads(user_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute('SELECT language FROM users WHERE user_id = ?', (user_id,))
-    res = cursor.fetchone()
-    conn.close()
-    if res and res[0]:
-        return res[0]
-    return 'ru'
-
-def db_set_user_language(user_id: int, lang: str):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('UPDATE users SET language = ? WHERE user_id = ?', (lang, user_id))
+    cursor.execute("UPDATE users SET download_count = download_count + 1 WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
 
-def db_get_user_reg_date(user_id: int) -> str:
+def get_all_users_count():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute('SELECT joined_date FROM users WHERE user_id = ?', (user_id,))
-    res = cursor.fetchone()
+    cursor.execute("SELECT COUNT(*) FROM users")
+    count = cursor.fetchone()[0]
     conn.close()
-    if res and res[0]:
-        try:
-            dt = datetime.fromisoformat(res[0])
-            return dt.strftime('%d.%m.%Y')
-        except:
-            return str(res[0])[:10]
-    return "Неизвестно"
-# -------------------------------------------------------------
+    return count
 
-def db_get_stats():
+def get_all_user_ids():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute('SELECT COUNT(*) FROM users')
-    total = cursor.fetchone()[0]
-    cursor.execute('SELECT COUNT(*) FROM users WHERE vip_status = 1')
-    vip_total = cursor.fetchone()[0]
+    cursor.execute("SELECT user_id FROM users")
+    ids = [row[0] for row in cursor.fetchall()]
     conn.close()
-    return total, vip_total
-
-def db_get_all_users():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('SELECT user_id FROM users')
-    users = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return users
-
-def get_maintenance_mode():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT value FROM settings WHERE key='maintenance'")
-    res = cursor.fetchone()
-    conn.close()
-    return res[0] if res else 'off'
-
-def set_maintenance_mode(status: str):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE settings SET value = ? WHERE key='maintenance'", (status,))
-    conn.commit()
-    conn.close()
+    return ids
