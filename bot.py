@@ -1,11 +1,13 @@
 # ==========================================
-# ЧАСТЬ 1: БАЗА ДАННЫХ, ЯЗЫКИ И ГРУППЫ
+# ЧАСТЬ 1: ВЕБ-СЕРВЕР (60 СЕК PING), БАЗА И ЯЗЫКИ
 # ==========================================
 import os
 import asyncio
 import logging
 import sqlite3
 import yt_dlp
+import aiohttp
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command, CommandStart, ChatMemberUpdatedFilter, IS_MEMBER, IS_NOT_MEMBER
 from aiogram.types import (
@@ -17,6 +19,39 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
+ADMIN_ID = 6444735646
+HARDCODED_TOKEN = "7544040776:AAHD_W5oB_D604E-S2M1Ew2X4g1v-q9W93g"
+BOT_TOKEN = os.getenv("BOT_TOKEN", HARDCODED_TOKEN)
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
+
+# --- АВТОМАТИЧЕСКИЙ ВЕБ-СЕРВЕР И АВТОПИНГ КАЖДЫЕ 60 СЕКУНД (В САМОМ ВЕРХУ) ---
+async def handle_ping(request):
+    return web.Response(text="Bot is alive 24/7!")
+
+async def self_ping_loop():
+    """Автопрозвонка каждые 60 секунд для удержания Render 24/7"""
+    await asyncio.sleep(5)
+    while True:
+        if RENDER_EXTERNAL_URL:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(RENDER_EXTERNAL_URL) as resp:
+                        logging.info(f"Self-ping 60s status: {resp.status}")
+            except Exception as e:
+                logging.error(f"Self-ping error: {e}")
+        await asyncio.sleep(60) # Пинг каждые 60 секунд!
+
+async def start_web_server():
+    port = int(os.getenv("PORT", 8080))
+    app = web.Application()
+    app.router.add_get('/', handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    asyncio.create_task(self_ping_loop())
+
+# --- БАЗА ДАННЫХ ---
 DB_NAME = "bot_database.db"
 
 def init_db():
@@ -265,13 +300,10 @@ async def download_media(url: str, user_id: int, mode: str = "video", is_group: 
     filename = await loop.run_in_executor(None, _extract)
     return filename
 # ==========================================
-# ЧАСТЬ 4: ЛОГИКА БОТА, ГРУППЫ И ХЭНДЛЕРЫ
+# ЧАСТЬ 4: ЛОГИКА БОТА, ГРУППЫ И ЗАПУСК
 # ==========================================
 
-ADMIN_ID = 6444735646
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-bot = Bot(token=BOT_TOKEN if BOT_TOKEN else "DUMMY_TOKEN")
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 logging.basicConfig(level=logging.INFO)
 
@@ -297,7 +329,7 @@ async def handle_group_link(message: types.Message):
     filename = None
 
     try:
-        # Для групп всегда включаем режим обычного качества и водяного знака
+        # Для групп всегда включаем режим обычного качества (до 720p) и водяного знака
         filename = await download_media(url, message.from_user.id, mode="video", is_group=True)
         file_input = FSInputFile(filename)
         await message.reply_video(video=file_input, caption="✅ Скачано через @PulseFetchBot")
@@ -492,7 +524,6 @@ async def set_language(callback: types.CallbackQuery):
         t(callback.from_user.id, "lang_changed"),
         parse_mode="Markdown"
     )
-    # Обновляем главное меню под новый язык
     await callback.message.answer("Menu updated:", reply_markup=get_main_keyboard(callback.from_user.id))
 
 @dp.callback_query(F.data == "show_guide")
@@ -549,7 +580,9 @@ async def process_broadcast(message: types.Message, state: FSMContext):
     await status_msg.edit_text(f"✅ Готово!\nУспешно: `{success}`\nОшибок: `{failed}`", parse_mode="Markdown")
     await state.clear()
 
+# --- ЗАПУСК СЕРВЕРА (60 сек пинг) И БОТА ---
 async def main():
+    await start_web_server()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
