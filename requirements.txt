@@ -1,4 +1,4 @@
+aiogram>=3.7
 yt-dlp[default]
-aiogram>=3.3.0
 aiohttp
-curl_cffi
+Pillow
