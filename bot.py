@@ -1,5 +1,5 @@
 # ==========================================
-# ЧАСТЬ 1: ВЕБ-СЕРВЕР (60 СЕК PING), БАЗА И ЯЗЫКИ
+# PULSEFETCH BOT - ЧАСТЬ 1 ИЗ 2
 # ==========================================
 import os
 import asyncio
@@ -24,12 +24,11 @@ HARDCODED_TOKEN = "7544040776:AAHD_W5oB_D604E-S2M1Ew2X4g1v-q9W93g"
 BOT_TOKEN = os.getenv("BOT_TOKEN", HARDCODED_TOKEN)
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
 
-# --- АВТОМАТИЧЕСКИЙ ВЕБ-СЕРВЕР И АВТОПИНГ КАЖДЫЕ 60 СЕКУНД (В САМОМ ВЕРХУ) ---
+# --- 1. ВЕБ-СЕРВЕР И АВТОПИНГ КАЖДЫЕ 60 СЕКУНД (ПРИОРИТЕТ 1) ---
 async def handle_ping(request):
     return web.Response(text="Bot is alive 24/7!")
 
 async def self_ping_loop():
-    """Автопрозвонка каждые 60 секунд для удержания Render 24/7"""
     await asyncio.sleep(5)
     while True:
         if RENDER_EXTERNAL_URL:
@@ -39,7 +38,7 @@ async def self_ping_loop():
                         logging.info(f"Self-ping 60s status: {resp.status}")
             except Exception as e:
                 logging.error(f"Self-ping error: {e}")
-        await asyncio.sleep(60) # Пинг каждые 60 секунд!
+        await asyncio.sleep(60)
 
 async def start_web_server():
     port = int(os.getenv("PORT", 8080))
@@ -51,7 +50,7 @@ async def start_web_server():
     await site.start()
     asyncio.create_task(self_ping_loop())
 
-# --- БАЗА ДАННЫХ ---
+# --- 2. БАЗА ДАННЫХ (Язык по умолчанию 'ru') ---
 DB_NAME = "bot_database.db"
 
 def init_db():
@@ -87,7 +86,7 @@ def add_user(user_id, username=None, referred_by=None):
     cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
     if not cursor.fetchone():
         cursor.execute(
-            "INSERT INTO users (user_id, username, referred_by) VALUES (?, ?, ?)",
+            "INSERT INTO users (user_id, username, language, referred_by) VALUES (?, ?, 'ru', ?)",
             (user_id, username, referred_by)
         )
         if referred_by and referred_by != user_id:
@@ -127,7 +126,7 @@ def get_all_user_ids():
 
 init_db()
 
-# --- СЛОВАРЬ ПЕРЕВОДОВ ---
+# --- 3. СЛОВАРЬ ПЕРЕВОДОВ ---
 LOCALES = {
     "ru": {
         "btn_dl": "📥 Скачать медиа",
@@ -139,14 +138,14 @@ LOCALES = {
         "start": "👋 Привет, {name}!\n\nДобро пожаловать в **PulseFetch** — бот для скачивания медиа из TikTok, YouTube, Instagram и других сервисов!\n\nВоспользуйся меню ниже для выбора нужного действия 👇",
         "group_welcome": "👋 **Всем привет! Я бот PulseFetch!**\n\nЯ умею скачивать видео из **TikTok, YouTube / Shorts, Instagram Reels** и других сервисов прямо в этот чат!\n\n💡 **Как скачать:** просто отправьте ссылку на видео в чат, и я пришлю его готовым файлом!",
         "restart": "🔄 Бот успешно перезапущен!\n\n👇 Нажми кнопку «📥 Скачать медиа», чтобы выбрать платформу!",
-        "step1": "📁 **Шаг 1 из 2: Выбери платформу, с которой хочешь скачать контент:**",
-        "step2": "📥 **Шаг 2 из 2: Отправь ссылку на видео или контент**\n\nПросто вставь и отправь ссылку в этот чат!",
-        "format_title": "🎛 **Выбери, что именно нужно скачать:**",
+        "step1": "📁 **Шаг 1 из 3: Выбери платформу, с которой хочешь скачать контент:**",
+        "step2": "🎛 **Шаг 2 из 3: Выбери формат загрузки:**",
+        "step3": "📥 **Шаг 3 из 3: Отправь ссылку на видео или контент**\n\nПросто вставь и отправь ссылку в этот чат!",
         "dl_loading": "⏳ **Загрузка медиа... Пожалуйста, подожди.**",
         "dl_sending": "🚀 **Отправка файла в чат...**",
         "dl_error": "❌ **Ошибка при скачивании.** Убедитесь, что ссылка правильная и видео не превышает 50 МБ.",
-        "lang_changed": "✅ **Язык успешно изменен!**",
-        "guide": "📖 **Как пользоваться ботом PulseFetch:**\n\n1️⃣ Нажми кнопку «📥 Скачать медиа» в главном меню.\n2️⃣ Выбери нужную платформу.\n3️⃣ Отправь боту ссылку на видео.\n4️⃣ Выбери формат (видео или MP3) — бот пришлет готовый файл!"
+        "lang_changed": "✅ **Язык успешно изменен на Русский!**",
+        "guide": "📖 **Как пользоваться ботом PulseFetch:**\n\n1️⃣ Нажми кнопку «📥 Скачать медиа» в главном меню.\n2️⃣ Выбери платформу и формат.\n3️⃣ Отправь боту ссылку — бот пришлет готовый файл!"
     },
     "ua": {
         "btn_dl": "📥 Завантажити медіа",
@@ -158,14 +157,14 @@ LOCALES = {
         "start": "👋 Привіт, {name}!\n\nЛаскаво просимо до **PulseFetch** — бота для завантаження медіа з TikTok, YouTube, Instagram та інших сервісів!\n\nСкористайся меню нижче 👇",
         "group_welcome": "👋 **Усім привіт! Я бот PulseFetch!**\n\nЯ вмію завантажувати відео з **TikTok, YouTube / Shorts, Instagram Reels** та інших сервісів прямо у цей чат!\n\n💡 **Як завантажити:** просто надішліть посилання на відео в чат, і я надішлю готовий файл!",
         "restart": "🔄 Бот успішно перезапущено!\n\n👇 Натисни кнопку «📥 Завантажити медіа», щоб обрати платформу!",
-        "step1": "📁 **Крок 1 з 2: Обери платформу для завантаження:**",
-        "step2": "📥 **Крок 2 з 2: Надішли посилання на відео або контент**\n\nПросто вставити та надішли посилання у цей чат!",
-        "format_title": "🎛 **Обери, що саме потрібно завантажити:**",
+        "step1": "📁 **Крок 1 з 3: Обери платформу для завантаження:**",
+        "step2": "🎛 **Крок 2 з 3: Обери формат завантаження:**",
+        "step3": "📥 **Крок 3 з 3: Надішли посилання на відео або контент**\n\nПросто вставити та надішли посилання у цей чат!",
         "dl_loading": "⏳ **Завантаження медіа... Зачекайте, будь ласка.**",
         "dl_sending": "🚀 **Надсилання файлу в чат...**",
         "dl_error": "❌ **Помилка завантаження.** Перевірте посилання та розмір файлу (до 50 МБ).",
-        "lang_changed": "✅ **Мову успішно змінено!**",
-        "guide": "📖 **Як користуватися ботом PulseFetch:**\n\n1️⃣ Натисни кнопку «📥 Завантажити медіа».\n2️⃣ Обери потрібну платформу.\n3️⃣ Надішли посилання на відео.\n4️⃣ Обери формат (відео чи MP3) — бот надішле файл!"
+        "lang_changed": "✅ **Мову успішно змінено на Українську!**",
+        "guide": "📖 **Як користуватися ботом PulseFetch:**\n\n1️⃣ Натисни «📥 Завантажити медіа».\n2️⃣ Обери платформу та формат.\n3️⃣ Надішли посилання — бот надішле файл!"
     },
     "en": {
         "btn_dl": "📥 Download media",
@@ -177,26 +176,24 @@ LOCALES = {
         "start": "👋 Hello, {name}!\n\nWelcome to **PulseFetch** — your bot for downloading media from TikTok, YouTube, Instagram and more!\n\nUse the menu below 👇",
         "group_welcome": "👋 **Hello everyone! I'm PulseFetch Bot!**\n\nI can download videos from **TikTok, YouTube / Shorts, Instagram Reels** and other platforms directly to this chat!\n\n💡 **How to download:** just send a video link into this chat, and I'll send you the file!",
         "restart": "🔄 Bot restarted successfully!\n\n👇 Click «📥 Download media» to choose platform!",
-        "step1": "📁 **Step 1 of 2: Select platform:**",
-        "step2": "📥 **Step 2 of 2: Send video link**\n\nJust paste and send link in this chat!",
-        "format_title": "🎛 **Choose format to download:**",
+        "step1": "📁 **Step 1 of 3: Select platform:**",
+        "step2": "🎛 **Step 2 of 3: Choose download format:**",
+        "step3": "📥 **Step 3 of 3: Send video link**\n\nJust paste and send link in this chat!",
         "dl_loading": "⏳ **Downloading media... Please wait.**",
         "dl_sending": "🚀 **Sending file...**",
         "dl_error": "❌ **Download error.** Make sure the link is correct and under 50 MB.",
-        "lang_changed": "✅ **Language changed successfully!**",
-        "guide": "📖 **How to use PulseFetch:**\n\n1️⃣ Click «📥 Download media».\n2️⃣ Choose platform.\n3️⃣ Send link.\n4️⃣ Choose format (video or MP3) — bot will send the file!"
+        "lang_changed": "✅ **Language changed successfully to English!**",
+        "guide": "📖 **How to use PulseFetch:**\n\n1️⃣ Click «📥 Download media».\n2️⃣ Choose platform and format.\n3️⃣ Send link — bot will send the file!"
     }
 }
 
 def t(user_id, key, **kwargs):
     user = get_user(user_id)
-    lang = user[2] if user else "ru"
-    text = LOCALES.get(lang, LOCALES["ru"]).get(key, LOCALES["ru"].get(key, ""))
+    lang = user[2] if user and user[2] in LOCALES else "ru"
+    text = LOCALES[lang].get(key, LOCALES["ru"].get(key, ""))
     return text.format(**kwargs) if kwargs else text
-# ==========================================
-# ЧАСТЬ 2: КЛАВИАТУРЫ И МЕНЮ
-# ==========================================
 
+# --- 4. КЛАВИАТУРЫ ---
 def get_main_keyboard(user_id: int):
     kb = [
         [KeyboardButton(text=t(user_id, "btn_dl"))],
@@ -220,7 +217,7 @@ def get_platforms_keyboard():
 def get_format_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎬 Только видео", callback_data="fmt_video")],
-        [InlineKeyboardButton(text="🎵 Только озвучка (MP3)", callback_data="fmt_audio")],
+        [InlineKeyboardButton(text="🎵 Только аудио (MP3)", callback_data="fmt_audio")],
         [InlineKeyboardButton(text="📦 Всё вместе (видео + звук)", callback_data="fmt_both")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_download")]
     ])
@@ -257,50 +254,65 @@ def get_admin_keyboard():
         [InlineKeyboardButton(text="📢 Сделать рассылку", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="📊 Полная статистика", callback_data="admin_stats")]
     ])
-# ==========================================
-# ЧАСТЬ 3: МОДУЛЬ ЗАГРУЗКИ (yt-dlp)
-# ==========================================
 
-async def download_media(url: str, user_id: int, mode: str = "video", is_group: bool = False) -> str:
+# --- 5. МОДУЛЬ ЗАГРУЗКИ (yt-dlp) ---
+async def download_media_files(url: str, user_id: int, mode: str = "video", is_group: bool = False) -> dict:
     os.makedirs("downloads", exist_ok=True)
     
-    # В группах качаем всегда в обычном качестве (до 720p)
-    if is_group:
-        fmt_str = 'bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]/b'
-    elif mode == "audio":
-        fmt_str = 'bestaudio/best'
-    else:
-        fmt_str = 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b'
-
-    ydl_opts = {
-        'format': fmt_str,
-        'outtmpl': f'downloads/{user_id}_%(id)s.%(ext)s',
-        'max_filesize': 50 * 1024 * 1024,  # Лимит 50 МБ
+    base_ydl_opts = {
+        'max_filesize': 50 * 1024 * 1024,
         'quiet': True,
-        'no_warnings': True
+        'no_warnings': True,
+        'nocheckcertificate': True,
+        'ignoreerrors': False,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web']
+            }
+        }
     }
 
-    if mode == "audio":
-        ydl_opts['postprocessors'] = [{
+    loop = asyncio.get_event_loop()
+    result = {"video": None, "audio": None}
+
+    if mode in ["video", "both"]:
+        if is_group:
+            fmt_str = 'bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]/b'
+        else:
+            fmt_str = 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b'
+
+        opts_v = base_ydl_opts.copy()
+        opts_v['format'] = fmt_str
+        opts_v['outtmpl'] = f'downloads/{user_id}_v_%(id)s.%(ext)s'
+
+        def _extract_v():
+            with yt_dlp.YoutubeDL(opts_v) as ydl:
+                info = ydl.extract_info(url, download=True)
+                return ydl.prepare_filename(info)
+
+        result["video"] = await loop.run_in_executor(None, _extract_v)
+
+    if mode in ["audio", "both"]:
+        opts_a = base_ydl_opts.copy()
+        opts_a['format'] = 'bestaudio/best'
+        opts_a['outtmpl'] = f'downloads/{user_id}_a_%(id)s.%(ext)s'
+        opts_a['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }]
 
-    loop = asyncio.get_event_loop()
-
-    def _extract():
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            if mode == "audio":
+        def _extract_a():
+            with yt_dlp.YoutubeDL(opts_a) as ydl:
+                info = ydl.extract_info(url, download=True)
                 base, _ = os.path.splitext(ydl.prepare_filename(info))
                 return base + ".mp3"
-            return ydl.prepare_filename(info)
 
-    filename = await loop.run_in_executor(None, _extract)
-    return filename
+        result["audio"] = await loop.run_in_executor(None, _extract_a)
+
+    return result
 # ==========================================
-# ЧАСТЬ 4: ЛОГИКА БОТА, ГРУППЫ И ЗАПУСК
+# PULSEFETCH BOT - ЧАСТЬ 2 ИЗ 2
 # ==========================================
 
 bot = Bot(token=BOT_TOKEN)
@@ -308,12 +320,12 @@ dp = Dispatcher(storage=MemoryStorage())
 logging.basicConfig(level=logging.INFO)
 
 class DownloadState(StatesGroup):
+    waiting_for_format = State()
     waiting_for_link = State()
 
 class AdminState(StatesGroup):
     waiting_for_broadcast = State()
 
-# --- ОБРАБОТКА ДОБАВЛЕНИЯ БОТА В ГРУППЫ ---
 @dp.my_chat_member(ChatMemberUpdatedFilter(member_status_changed=IS_NOT_MEMBER >> IS_MEMBER))
 async def on_bot_added_to_group(event: ChatMemberUpdated):
     await event.answer(
@@ -321,28 +333,27 @@ async def on_bot_added_to_group(event: ChatMemberUpdated):
         parse_mode="Markdown"
     )
 
-# --- ЛОГИКА АВТОМАТИЧЕСКОГО ПЕРЕХВАТА ССЫЛОК В ГРУППАХ ---
 @dp.message(F.chat.type.in_({"group", "supergroup"}) & F.text.contains("http"))
 async def handle_group_link(message: types.Message):
     url = message.text.strip()
     status_msg = await message.reply("⏳ **Загрузка медиа для группы...**", parse_mode="Markdown")
-    filename = None
+    files = {}
 
     try:
-        # Для групп всегда включаем режим обычного качества (до 720p) и водяного знака
-        filename = await download_media(url, message.from_user.id, mode="video", is_group=True)
-        file_input = FSInputFile(filename)
-        await message.reply_video(video=file_input, caption="✅ Скачано через @PulseFetchBot")
-        increment_downloads(message.from_user.id)
-        await status_msg.delete()
+        files = await download_media_files(url, message.from_user.id, mode="video", is_group=True)
+        if files.get("video"):
+            file_input = FSInputFile(files["video"])
+            await message.reply_video(video=file_input, caption="✅ Скачано через @PulseFetchBot")
+            increment_downloads(message.from_user.id)
+            await status_msg.delete()
     except Exception as e:
         logging.error(f"Group download error: {e}")
         await status_msg.edit_text("❌ Не удалось скачать медиа по этой ссылке.")
     finally:
-        if filename and os.path.exists(filename):
-            os.remove(filename)
+        for fpath in files.values():
+            if fpath and os.path.exists(fpath):
+                os.remove(fpath)
 
-# --- КОМАНДА /start В ЛИЧНЫХ СООБЩЕНИЯХ ---
 @dp.message(CommandStart(), F.chat.type == "private")
 async def start_cmd(message: types.Message):
     args = message.text.split()
@@ -356,7 +367,6 @@ async def start_cmd(message: types.Message):
         reply_markup=get_main_keyboard(message.from_user.id)
     )
 
-# --- 🔄 ПЕРЕЗАПУСК БОТА ---
 @dp.message(F.text.in_({"🔄 Перезапустить бота", "🔄 Перезапустити бота", "🔄 Restart bot"}))
 async def restart_cmd(message: types.Message, state: FSMContext):
     await state.clear()
@@ -365,7 +375,6 @@ async def restart_cmd(message: types.Message, state: FSMContext):
         reply_markup=get_main_keyboard(message.from_user.id)
     )
 
-# --- ℹ️ О БОТЕ И ПРАВИЛАХ ---
 @dp.message(F.text.in_({"ℹ️ О боте и правилах", "ℹ️ Про бота та правила", "ℹ️ About & Rules"}))
 async def about_cmd(message: types.Message):
     text = (
@@ -383,7 +392,6 @@ async def about_cmd(message: types.Message):
     )
     await message.answer(text, parse_mode="Markdown", reply_markup=get_back_to_menu_keyboard())
 
-# --- 🎁 БЕСПЛАТНЫЙ VIP ---
 @dp.message(F.text.in_({"🎁 Бесплатный VIP за друзей", "🎁 Безкоштовний VIP за друзів", "🎁 Free VIP for friends"}))
 async def ref_cmd(message: types.Message):
     user = get_user(message.from_user.id)
@@ -402,7 +410,6 @@ async def ref_cmd(message: types.Message):
     )
     await message.answer(text, parse_mode="Markdown")
 
-# --- 👤 ПРОФИЛЬ ---
 @dp.message(F.text.in_({"👤 Мой профиль", "👤 Мій профіль", "👤 My profile"}))
 async def profile_cmd(message: types.Message):
     user = get_user(message.from_user.id)
@@ -420,7 +427,6 @@ async def profile_cmd(message: types.Message):
     )
     await message.answer(text, parse_mode="Markdown", reply_markup=get_profile_keyboard())
 
-# --- ⚙️ НАСТРОЙКИ ---
 @dp.message(F.text.in_({"⚙️ Настройки", "⚙️ Налаштування", "⚙️ Settings"}))
 async def settings_cmd(message: types.Message):
     user = get_user(message.from_user.id)
@@ -433,7 +439,7 @@ async def settings_cmd(message: types.Message):
     )
     await message.answer(text, parse_mode="Markdown", reply_markup=get_settings_keyboard())
 
-# --- 📥 СКАЧАТЬ МЕДИА (ЛИЧНЫЕ СООБЩЕНИЯ) ---
+# --- ШАГ 1: Нажатие «Скачать медиа» -> Выбор платформы ---
 @dp.message(F.text.in_({"📥 Скачать медиа", "📥 Завантажити медіа", "📥 Download media"}))
 async def choose_platform(message: types.Message):
     await message.answer(
@@ -442,12 +448,17 @@ async def choose_platform(message: types.Message):
         reply_markup=get_platforms_keyboard()
     )
 
+# --- ШАГ 2: Выбор платформы -> Выбор формата ---
 @dp.callback_query(F.data.startswith("plat_"))
 async def platform_selected(callback: types.CallbackQuery, state: FSMContext):
-    await state.set_state(DownloadState.waiting_for_link)
+    platform = callback.data.split("_")[1]
+    await state.update_data(platform=platform)
+    await state.set_state(DownloadState.waiting_for_format)
+    
     await callback.message.edit_text(
         t(callback.from_user.id, "step2"),
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=get_format_keyboard()
     )
     await callback.answer()
 
@@ -457,56 +468,58 @@ async def cancel_download(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text("❌ Загрузка отменена.")
     await callback.answer()
 
+# --- ШАГ 3: Выбор формата -> Просим отправить ссылку ---
+@dp.callback_query(F.data.startswith("fmt_"))
+async def format_selected(callback: types.CallbackQuery, state: FSMContext):
+    format_type = callback.data.split("_")[1] # video, audio, both
+    await state.update_data(format_type=format_type)
+    await state.set_state(DownloadState.waiting_for_link)
+
+    await callback.message.edit_text(
+        t(callback.from_user.id, "step3"),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+# --- ШАГ 4: Отправка ссылки и выгрузка медиафайлов ---
 @dp.message(DownloadState.waiting_for_link)
 async def process_download_link(message: types.Message, state: FSMContext):
     url = message.text.strip()
     if not url.startswith("http"):
-        await message.answer("⚠️ Пожалуйста, отправь корректную ссылку!")
+        await message.answer("⚠️ Пожалуйста, отправь корректную ссылку, начинающуюся с http:// или https://")
         return
 
-    await state.update_data(url=url)
-    await message.answer(
-        t(message.from_user.id, "format_title"),
-        parse_mode="Markdown",
-        reply_markup=get_format_keyboard()
-    )
-
-@dp.callback_query(F.data.startswith("fmt_"))
-async def process_format_choice(callback: types.CallbackQuery, state: FSMContext):
-    format_type = callback.data.split("_")[1]
     data = await state.get_data()
-    url = data.get("url")
+    format_type = data.get("format_type", "video")
 
-    if not url:
-        await callback.message.edit_text("❌ Ошибка: ссылка не найдена.")
-        await state.clear()
-        return
-
-    status_msg = await callback.message.edit_text(t(callback.from_user.id, "dl_loading"), parse_mode="Markdown")
-    filename = None
+    status_msg = await message.answer(t(message.from_user.id, "dl_loading"), parse_mode="Markdown")
+    files = {}
 
     try:
-        mode = "audio" if format_type == "audio" else "video"
-        filename = await download_media(url, callback.from_user.id, mode=mode)
-        
-        await status_msg.edit_text(t(callback.from_user.id, "dl_sending"), parse_mode="Markdown")
-        file_input = FSInputFile(filename)
-        
-        if format_type == "audio":
-            await callback.message.answer_audio(audio=file_input, caption="🎵 @PulseFetchBot")
-        else:
-            await callback.message.answer_video(video=file_input, caption="✅ @PulseFetchBot")
-        
-        increment_downloads(callback.from_user.id)
+        files = await download_media_files(url, message.from_user.id, mode=format_type)
+        await status_msg.edit_text(t(message.from_user.id, "dl_sending"), parse_mode="Markdown")
+
+        # Отправка видео
+        if files.get("video"):
+            v_input = FSInputFile(files["video"])
+            await message.answer_video(video=v_input, caption="🎬 Видео | @PulseFetchBot")
+
+        # Отправка аудио
+        if files.get("audio"):
+            a_input = FSInputFile(files["audio"])
+            await message.answer_audio(audio=a_input, caption="🎵 Аудио | @PulseFetchBot")
+
+        increment_downloads(message.from_user.id)
         await status_msg.delete()
 
     except Exception as e:
         logging.error(f"Download error: {e}")
-        await status_msg.edit_text(t(callback.from_user.id, "dl_error"))
+        await status_msg.edit_text(t(message.from_user.id, "dl_error"))
     
     finally:
-        if filename and os.path.exists(filename):
-            os.remove(filename)
+        for fpath in files.values():
+            if fpath and os.path.exists(fpath):
+                os.remove(fpath)
         await state.clear()
 
 # --- СМЕНА ЯЗЫКА ---
@@ -515,16 +528,20 @@ async def change_lang_menu(callback: types.CallbackQuery):
     await callback.message.edit_text("🌐 Выбери язык / Choose language:", reply_markup=get_languages_keyboard())
 
 @dp.callback_query(F.data.startswith("setlang_"))
-async def set_language(callback: types.CallbackQuery):
+async def set_language(callback: types.CallbackQuery, state: FSMContext):
     lang = callback.data.split("_")[1]
     set_user_language(callback.from_user.id, lang)
     
     await callback.answer("✅ Done")
+    
     await callback.message.edit_text(
         t(callback.from_user.id, "lang_changed"),
         parse_mode="Markdown"
     )
-    await callback.message.answer("Menu updated:", reply_markup=get_main_keyboard(callback.from_user.id))
+    await callback.message.answer(
+        t(callback.from_user.id, "restart"),
+        reply_markup=get_main_keyboard(callback.from_user.id)
+    )
 
 @dp.callback_query(F.data == "show_guide")
 async def show_guide(callback: types.CallbackQuery):
@@ -580,7 +597,7 @@ async def process_broadcast(message: types.Message, state: FSMContext):
     await status_msg.edit_text(f"✅ Готово!\nУспешно: `{success}`\nОшибок: `{failed}`", parse_mode="Markdown")
     await state.clear()
 
-# --- ЗАПУСК СЕРВЕРА (60 сек пинг) И БОТА ---
+# --- ЗАПУСК ---
 async def main():
     await start_web_server()
     await dp.start_polling(bot)
